@@ -1,0 +1,343 @@
+---
+name: pulse_has_many_section
+description: Standards for creating has_many section views using Pulse UI gem
+version: 2.0.0
+author: Frank
+date: 2025-07-24
+globs:
+  - "app/views/**/section_*/*.html.erb"
+  - "app/views/**/sections/*/*.html.erb"
+  - "app/controllers/**/*section*_controller.rb"
+tags:
+  - pulse
+  - ui
+  - has_many
+  - section
+  - turbo
+---
+
+# Pulse Has Many Section
+
+This rule defines the standard pattern for creating has_many section views using the Pulse UI gem. These sections display related records with filtering, bulk actions, and field management.
+
+<rule>
+name: pulse_has_many_section
+description: Enforces consistent patterns for has_many section views using Pulse UI gem
+filters:
+  - type: file_path
+    pattern: "app/views/.*/section_.*/.*.html.erb"
+  - type: file_path
+    pattern: "app/controllers/.*section.*_controller.rb"
+  - type: content
+    pattern: "turbo_frame_tag"
+actions:
+  - type: suggest
+    message: |
+      When creating has_many section views with Pulse UI gem, follow these patterns:
+
+      ## Tier 1: Simple Read-Only Section
+
+      ### View Structure (`show.html.erb`)
+      ```erb
+      <%= turbo_frame_tag :section_name do %>
+        <%= ui.section.page :section_name do |p| %>
+          <% p.with_heading { ui.heading :h2, "Section Title", id: "section-anchor" } %>
+          <% p.with_actions do %>
+            <%= ui.button "Edit", href: edit_path, size: :sm, style: :secondary,
+                          data: { turbo_frame: "section_name" } %>
+          <% end %>
+
+          <%= flash_messages(flash) %>
+
+          <% if @parent.children.any? %>
+            <%= ui.table hover: true, contained: false do |table| %>
+              <thead>
+                <tr <%= table.cls(:thead_tr) %>>
+                  <th class="<%= table.cls(:th) %>">Column Name</th>
+                  <th class="<%= table.cls(:th) %>">Other Column</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% @parent.children.each do |child| %>
+                <tr class="<%= table.cls(:tr) %>">
+                  <td class="<%= table.cls(:td) %>">
+                    <%= ui.link child.name, href: child_path(child),
+                               underline: true, size: :sm, variant: :neutral,
+                               data: { turbo_frame: "_top" } %>
+                  </td>
+                  <td class="<%= table.cls(:td) %>"><%= child.attribute %></td>
+                </tr>
+                <% end %>
+              </tbody>
+            <% end %>
+          <% else %>
+            <%= ui.alert "No records found" %>
+          <% end %>
+        <% end %>
+      <% end %>
+      ```
+
+      ## Tier 2: Interactive Section with Full Features
+
+      ### Controller Pattern
+      ```ruby
+      class ParentSectionChildrenController < ApplicationController
+        def index
+          @parent = Parent.find(params[:parent_id])
+
+          @q = @parent.children.includes(:associations).ransack(filter_params.to_h)
+          @q.sorts = "id desc" if @q.sorts.empty?
+
+          @f = field_manager
+          @metadata, @children = paginate(@q.result)
+        end
+
+        private
+
+        def field_manager
+          fields.permit(:field1, :field2, :field3)
+                .require(:field1)
+                .default(:field2)
+                .from(:children)
+                .store(:children)
+        end
+
+        def filter_params
+          @filter_params ||= filters.initial.dataloaders(
+            status_in: ->(ids) { Status.where(id: ids).pluck(:name, :id) },
+            category_in: ->(ids) { Category.where(id: ids).pluck(:name, :id) }
+          ).store(:children)
+        end
+      end
+      ```
+
+      ### Main View (`index.html.erb`)
+      ```erb
+      <%= turbo_frame_tag :section_name do %>
+        <%= ui.section.page :section_name do |p| %>
+          <% p.with_heading { ui.heading :h2, "Section Title" } %>
+
+          <div class="flex flex-col gap-3" data-controller="multi-check reveal">
+            <!-- Bulk Actions Bar (Hidden by default) -->
+            <%= ui.action_bar sticky: true, contained: true, hidden: true,
+                              "data-multi-check-target": "reveal",
+                              "data-multi-check-condition": "count > 0" do |action_bar| %>
+              <% action_bar.with_actions do %>
+                <%= render "shared/bulk_actions", resource: :children %>
+              <% end %>
+              <span data-multi-check-target="counter">0</span> selected
+            <% end %>
+
+            <!-- Standard Actions & Filters -->
+            <%= ui.action_bar stacked: true,
+                              "data-multi-check-target": "visible",
+                              "data-multi-check-condition": "count == 0" do |action_bar| %>
+              <% action_bar.with_actions do %>
+                <%= render "results_actions" %>
+              <% end %>
+              <%= render "filters_form" %>
+            <% end %>
+
+            <!-- Results with nested turbo frame -->
+            <%= turbo_frame_tag 'results', target: '_top', class: "contents" do %>
+              <!-- Turbo stream templates for action updates -->
+              <turbo-stream action="replace" target="child_actions" class="hidden">
+                <template><%= render "results_actions" %></template>
+              </turbo-stream>
+              <turbo-stream action="replace" target="child_actions_bulk" class="hidden">
+                <template><%= render "shared/bulk_actions", resource: :children, selected: true %></template>
+              </turbo-stream>
+
+              <%= render "results" %>
+            <% end %>
+          </div>
+        <% end %>
+      <% end %>
+      ```
+
+      ### Filters Form (`_filters_form.html.erb`)
+      ```erb
+      <%= search_form_for([:parent, @q], url: current_path,
+                          builder: Pulse::FormBuilder,
+                          show_labels: false,
+                          size: :sm,
+                          data: { controller: 'auto-submit', turbo_frame: 'results' },
+                          html: { class: "contents" }) do |form| %>
+
+        <!-- Quick filters -->
+        <%= form.select :status_eq, status_options,
+                       { include_blank: "All statuses" },
+                       data: { action: "auto-submit#submit" } %>
+
+        <!-- Search with select -->
+        <%= ui.form.input icon_left: "magnifier",
+                         width: :xl,
+                         placeholder: "Search...",
+                         size: :sm,
+                         data: {
+                           controller: "search-select",
+                           turbo_frame: :section_name,
+                           search_select_base_url_value: current_path,
+                           search_select_config_value: search_config
+                         } %>
+
+        <!-- Filter drawer toggle -->
+        <%= ui.button icon_left: "filter", style: :secondary, size: :sm,
+                     class: "relative", "data-action": "reveal#toggle:prevent" do %>
+          <span class="hidden md:block">Filters</span>
+        <% end %>
+
+        <!-- Field visibility toggle -->
+        <%= ui.dropdown do |component| %>
+          <%= component.with_button(ui.icon("table-options", size: :sm),
+                                   icon_action: "chevron-down",
+                                   size: :sm, style: :secondary) %>
+          <%= component.with_dropdown do %>
+            <div class="flex flex-col gap-1">
+              <% @f.entries.each do |entry| %>
+                <%= ui.form.switch name: "f[]", size: :xs, **entry,
+                                  data: { action: "auto-submit#submit" } %>
+              <% end %>
+            </div>
+            <%= hidden_field_tag "f[]", "x" %>
+          <% end %>
+        <% end %>
+
+        <!-- Advanced filters drawer -->
+        <%= ui.dialog variant: :drawer do %>
+          <%= ui.dialog.page do |p| %>
+            <% p.with_heading { ui.heading :h2, "Filters" } %>
+            <div class="flex flex-col gap-3">
+              <%= ui.collapse "Status", opened: true do %>
+                <%= form.collection_select :status_in, status_collection, :id, :name,
+                                         { include_blank: "All statuses", multiple: true },
+                                         data: { action: "auto-submit#submit", controller: "select" } %>
+              <% end %>
+
+              <%= ui.collapse "Date Range", opened: @q.created_at_gteq.present? do %>
+                <div class="flex gap-2 flex-row items-center">
+                  <%= form.date_field :created_at_gteq,
+                                     data: { action: "auto-submit#submit" },
+                                     class: "flex-1" %>
+                  <span class="text-sm text-bd-neutral">to</span>
+                  <%= form.date_field :created_at_lteq,
+                                     data: { action: "auto-submit#submit" },
+                                     class: "flex-1" %>
+                </div>
+              <% end %>
+            </div>
+            <% p.with_actions do %>
+              <%= ui.button "Apply", style: :primary, block: true,
+                           data: { turbo_frame: false } %>
+            <% end %>
+          <% end %>
+        <% end %>
+      <% end %>
+      ```
+
+      ### Results (`_results.html.erb`)
+      ```erb
+      <%= ui.active_filter_group max: 3 do |group| %>
+        <%= group.with_filter(@filter_params.to_h, "Status", :status_in,
+                             @filter_params.data(:status_in),
+                             data: { turbo_frame: :section_name }) %>
+        <%= group.with_filter(@filter_params.to_h, "Date", :created_at_gteq,
+                             data: { turbo_frame: :section_name }) %>
+        <%= group.with_button(data: { action: "click->reveal#toggle" }) %>
+      <% end %>
+
+      <%= ui.table hover: true, contained: false do |table| %>
+        <thead>
+          <tr>
+            <th class="<%= table.cls(:th, class: "w-1 px-0") %>">
+              <%= ui.form.checkbox "data-multi-check-target": "checkboxAll" %>
+            </th>
+            <th class="<%= table.cls(:th) %>">
+              <%= sort_link(@q, :name, data: { turbo_frame: :section_name }) %>
+            </th>
+            <% if @f.include?(:status) %>
+            <th class="<%= table.cls(:th) %>">
+              <%= sort_link(@q, :status, data: { turbo_frame: :section_name }) %>
+            </th>
+            <% end %>
+            <th class="<%= table.cls(:th, class: "w-1") %>"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% @children.each do |child| %>
+          <tr class="<%= table.cls(:tr) %>">
+            <td class="<%= table.cls(:td, class: "w-1 px-0") %>">
+              <%= ui.form.checkbox child.id, "data-multi-check-target": "checkbox" %>
+            </td>
+            <td class="<%= table.cls(:td) %>">
+              <%= ui.link child.name, href: child_path(child),
+                         underline: true, size: :sm, variant: :neutral,
+                         data: { turbo_frame: "_top" } %>
+            </td>
+            <% if @f.include?(:status) %>
+            <td class="<%= table.cls(:td) %>"><%= child.status %></td>
+            <% end %>
+            <td class="<%= table.cls(:td, class: "p-0") %>">
+              <%= ui.dropdown strategy: :fixed, placement: "bottom-end" do |dropdown| %>
+                <%= dropdown.with_button(ui.icon("dots-vertical", size: :sm),
+                                        style: :tertiary, size: :xs, icon_only: true) %>
+                <%= dropdown.with_dropdown do %>
+                  <%= ui.link "Edit", href: edit_child_path(child),
+                             icon_left: "pencil", size: :sm, block: true %>
+                  <%= ui.link "Delete", href: child_path(child),
+                             variant: :danger, icon_left: "trash",
+                             size: :sm, block: true,
+                             data: { turbo_method: :delete, turbo_confirm: "Are you sure?" } %>
+                <% end %>
+              <% end %>
+            </td>
+          </tr>
+          <% end %>
+        </tbody>
+      <% end %>
+
+      <%= ui.pagination @metadata, data: { turbo_frame: :section_name } %>
+      ```
+
+      ## Key Requirements
+
+      1. **Turbo Frame Structure**: Main frame + nested 'results' frame
+      2. **Multi-check Integration**: Use `data-controller="multi-check reveal"`
+      3. **Action Bar Pattern**: Conditional visibility with bulk/standard actions
+      4. **Filter Integration**: Ransack + active filters + drawer filters
+      5. **Field Management**: Dynamic column visibility with switches
+      6. **Pulse UI Components**: Use `ui.section.page`, `ui.action_bar`, `ui.table`, etc.
+      7. **Navigation**: Always use `data: { turbo_frame: "_top" }` for external links
+      8. **Form Integration**: Use `Pulse::FormBuilder` and auto-submit patterns
+
+      ## Naming Conventions
+
+      - **Turbo frame**: `:section_name` (snake_case, descriptive)
+      - **Controller**: `ParentSectionChildrenController`
+      - **File structure**: `parent/section_children/index.html.erb`
+      - **Partials**: `_filters_form.html.erb`, `_results.html.erb`, `_results_actions.html.erb`
+
+      ## Required Controller Helpers
+
+      ```ruby
+      private
+
+      def field_manager
+        fields.permit(:field1, :field2, :field3)
+              .require(:required_field)
+              .default(:default_field)
+              .from(:resource_name)
+              .store(:resource_name)
+      end
+
+      def filter_params
+        filters.initial.dataloaders(
+          association_in: ->(ids) { Association.where(id: ids).pluck(:name, :id) }
+        ).store(:resource_name)
+      end
+      ```
+
+      Choose the appropriate tier:
+      - **Tier 1**: Simple display for basic has_many relationships
+      - **Tier 2**: Full-featured for complex data with filtering and bulk operations
+</rule>

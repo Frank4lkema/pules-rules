@@ -1,0 +1,583 @@
+---
+name: pulse_show_page
+description: "Standards for implementing Pulse Show pages version: 2.0.0"
+author: Frank
+date: 2025-08-24
+globs:
+alwaysApply: true
+---
+# Pulse Show Page Pattern
+
+Dit document beschrijft het herbruikbare patroon voor het creëren van Rails show/detail pagina's met secties en turbo frame functionaliteit.
+
+## Overzicht
+
+Een complete show pagina bestaat uit:
+1. **Hoofdstructuur** - Page container met heading
+2. **Secties** - Modulaire content secties met turbo frames
+3. **Section Controllers** - Dedicated controllers per sectie
+4. **Routes** - Nested resource configuratie
+
+## 1. Basic Show Page Pattern
+
+### Hoofdstructuur (show.html.erb)
+
+```erb
+<%= ui.page breadcrumbs: breadcrumbs, title: @[entiteit].name, topic: current_topic do |p| %>
+  <% p.with_heading { ui.heading(:h1, @[entiteit].name) } %>
+
+  <!-- Direct loaded section -->
+  <%= ui.section do %>
+    <%= turbo_frame_tag :[entiteit]_[sectie1] do %>
+      <%= render template: "[entiteiten]/section_[sectie1]/show" %>
+    <% end %>
+  <% end %>
+
+  <!-- Lazy loaded section -->
+  <%= ui.section do %>
+    <%= turbo_frame_tag :[entiteit]_[sectie2], src: [entiteit]_section_[sectie2]_path(@[entiteit]) do %>
+      loading [entiteit] [sectie2]...
+    <% end %>
+  <% end %>
+
+<% end %>
+```
+
+### Verplichte elementen:
+- `ui.page` met breadcrumbs, title, en topic
+- Simple heading met entiteit naam
+- Sections met turbo frames voor modulaire content
+
+## 2. Section Loading Patterns
+
+### Type 1: Direct Rendered Section (voor belangrijke content)
+
+```erb
+<%= ui.section do %>
+  <%= turbo_frame_tag :[sectie_id] do %>
+    <%= render template: "[entiteiten]/section_[sectie_naam]/show" %>
+  <% end %>
+<% end %>
+```
+
+**Gebruik voor:**
+- Primaire informatie (summary, details)
+- Content die altijd zichtbaar moet zijn
+- Kleine/snelle data
+
+### Type 2: Lazy Loaded Section (voor performance)
+
+```erb
+<%= ui.section do %>
+  <%= turbo_frame_tag :[sectie_id], src: [entiteit]_section_[sectie_naam]_path(@[entiteit]) do %>
+    loading [sectie_beschrijving]...
+  <% end %>
+<% end %>
+```
+
+**Gebruik voor:**
+- Gerelateerde data (collections)
+- Grote datasets
+- Optionele/minder belangrijke content
+
+## 3. Section Controllers
+
+Voor elke lazy loaded sectie maak je een dedicated controller:
+
+### Controller Structure
+
+```ruby
+# app/controllers/[entiteiten]/section_[sectie_naam]_controller.rb
+class [Entiteiten]::Section[SectieNaam]Controller < ApplicationController
+  def index  # voor collections
+    @[entiteit] = [Entiteit].find(params[:[entiteit]_id])
+
+    @q = @[entiteit].[association].includes([includes]).ransack([sectie_naam]_filters.to_h)
+    @q.sorts = "[default_sort]" if @q.sorts.empty?
+    @f = [sectie_naam]_fields
+    @metadata, @[collection] = paginate(@q.result)
+  end
+
+  def show  # voor single resources
+    @[entiteit] = [Entiteit].find(params[:[entiteit]_id])
+  end
+
+  def edit
+    @[entiteit] = [Entiteit].find(params[:[entiteit]_id])
+  end
+
+  def update
+    @[entiteit] = [Entiteit].find(params[:[entiteit]_id])
+    if @[entiteit].update([entiteit]_params)
+      redirect_to [entiteit]_section_[sectie_naam]_path(@[entiteit]),
+        notice: toast("[Entiteit] bijgewerkt!")
+    else
+      flash[:error] = @[entiteit].errors.full_messages.join(", ")
+      render :edit
+    end
+  end
+
+  private
+
+  def [sectie_naam]_fields
+    fields.permit([field_list]).require([required_fields]).default([default_fields]).from(:[association]).store(:[association])
+  end
+
+  def [sectie_naam]_filters
+    @[sectie_naam]_filters ||= filters.initial.dataloaders([dataloaders_hash]).store(:[association])
+  end
+
+  def [entiteit]_params
+    params.require(:[entiteit]).permit([permitted_attributes])
+  end
+
+  def turbo_frame_required
+    unless turbo_frame_request?
+      redirect_to demo_[entiteit]_path(params[:[entiteit]_id])
+    end
+  end
+end
+```
+
+### Single Resource Section Controller (bijv. Summary)
+
+```ruby
+# app/controllers/[entiteiten]/section_summary_controller.rb
+class [Entiteiten]::SectionSummaryController < ApplicationController
+  before_action :turbo_frame_required
+
+  def show
+    @[entiteit] = [Entiteit].find(params[:[entiteit]_id])
+  end
+
+  def edit
+    @[entiteit] = [Entiteit].find(params[:[entiteit]_id])
+  end
+
+  def update
+    @[entiteit] = [Entiteit].find(params[:[entiteit]_id])
+    if @[entiteit].update([entiteit]_params)
+      redirect_to [entiteit]_section_summary_path(@[entiteit]),
+        notice: toast("[Entiteit] bijgewerkt!")
+    else
+      flash[:error] = @[entiteit].errors.full_messages.join(", ")
+      render :edit
+    end
+  end
+
+  private
+
+  def [entiteit]_params
+    params.require(:[entiteit]).permit(:[attribuut1], :[attribuut2], :[attribuut3])
+  end
+
+  def turbo_frame_required
+    unless turbo_frame_request?
+      redirect_to [entiteit]_path(params[:[entiteit]_id])
+    end
+  end
+end
+```
+
+### Collection Section Controller (bijv. Related Items)
+
+```ruby
+# app/controllers/[entiteiten]/section_[collection]_controller.rb
+class [Entiteiten]::Section[Collection]Controller < ApplicationController
+  def index
+    @[entiteit] = [Entiteit].find(params[:[entiteit]_id])
+
+    @q = @[entiteit].[collection].includes(:[related_models]).ransack([collection]_filters.to_h)
+    @q.sorts = "[default_sort_field] [direction]" if @q.sorts.empty?
+    @f = [collection]_fields
+    @metadata, @[collection] = paginate(@q.result)
+  end
+
+  private
+
+  def [collection]_fields
+    fields.permit(:[field1], :[field2], :[field3])
+      .require(:[required_field])
+      .default(:[default_field1], :[default_field2])
+      .from(:[collection])
+      .store(:[collection])
+  end
+
+  def [collection]_filters
+    @[collection]_filters ||= filters.initial.dataloaders(
+      [related_id]_in: ->(ids) { [RelatedModel].where(id: ids).pluck(:[display_field], :id) },
+      [another_id]_in: ->(ids) { [AnotherModel].where(id: ids).pluck(:[display_field], :id) }
+    ).store(:[collection])
+  end
+end
+```
+
+## 4. Section Templates
+
+### Single Resource Section Template (Summary/Details)
+
+```erb
+<!-- app/views/[entiteiten]/section_[sectie_naam]/show.html.erb -->
+<%= turbo_frame_tag :[entiteit]_[sectie_naam] do %>
+  <%= ui.section.page :[entiteit]_[sectie_naam] do |p| %>
+    <% p.with_heading { ui.heading :h2, "[Sectie Titel]" } %>
+    <% p.with_actions do %>
+      <%= ui.button "Bewerken", href: edit_[entiteit]_section_[sectie_naam]_path(@[entiteit]),
+          size: :sm, style: :secondary,
+          data: { turbo_frame: "[entiteit]_[sectie_naam]", turbo_action: "advance" } %>
+    <% end %>
+
+    <%= ui.columns do |c| %>
+      <%= c.with_column do %>
+        <%= ui.description_list do |list| %>
+          <%= list.with_item do |item| %>
+            <%= item.with_key { [Entiteit].human_attribute_name(:[attribuut1]) } %>
+            <%= item.with_value { @[entiteit].[attribuut1] } %>
+          <% end %>
+          <%= list.with_item do |item| %>
+            <%= item.with_key { [Entiteit].human_attribute_name(:[attribuut2]) } %>
+            <%= item.with_value { @[entiteit].[attribuut2] } %>
+          <% end %>
+          <%= list.with_item do |item| %>
+            <%= item.with_key { [Entiteit].human_attribute_name(:[attribuut3]) } %>
+            <%= item.with_value { @[entiteit].[attribuut3] } %>
+          <% end %>
+        <% end %>
+      <% end %>
+      <%= c.with_column do %>
+        <%= ui.description_list do |list| %>
+          <%= list.with_item do |item| %>
+            <%= item.with_key { [Entiteit].human_attribute_name(:[attribuut4]) } %>
+            <%= item.with_value { @[entiteit].[attribuut4] } %>
+          <% end %>
+          <%= list.with_item do |item| %>
+            <%= item.with_key { [Entiteit].human_attribute_name(:[attribuut5]) } %>
+            <%= item.with_value { @[entiteit].[attribuut5] } %>
+          <% end %>
+          <%= list.with_item do |item| %>
+            <%= item.with_key { [Entiteit].human_attribute_name(:[attribuut6]) } %>
+            <%= item.with_value { @[entiteit].[attribuut6] } %>
+          <% end %>
+        <% end %>
+      <% end %>
+    <% end %>
+  <% end %>
+<% end %>
+```
+
+### Collection Section Template
+
+```erb
+<!-- app/views/[entiteiten]/section_[collection]/index.html.erb -->
+<%= turbo_frame_tag :[entiteit]_[collection] do %>
+  <%= ui.section.page :[entiteit]_[collection] do |p| %>
+    <% p.with_heading { ui.heading :h2, "[Collection Titel]" } %>
+
+    <!-- Use full index pattern here -->
+    <div class="flex flex-col gap-3" data-controller="multi-check reveal">
+      <%= ui.action_bar sticky: true, contained: true, hidden: true, "data-multi-check-target": "reveal", "data-multi-check-condition": "count > 0" do |action_bar| %>
+        <% action_bar.with_actions do %>
+          <%= render "[collection]/results_actions", id: "[collection]_actions_bulk", selected: true %>
+        <% end %>
+        <span data-multi-check-target="counter">0</span> selected
+      <% end %>
+
+      <%= ui.action_bar stacked: true, "data-multi-check-target": "visible", "data-multi-check-condition": "count == 0" do |action_bar| %>
+        <% action_bar.with_actions do %>
+          <%= render "[collection]/results_actions", id: "[collection]_actions" %>
+        <% end %>
+        <%= render "filters_form" %>
+      <% end %>
+
+      <%= turbo_frame_tag 'results', target: '_top', class: "contents" do %>
+        <%= render "results" %>
+      <% end %>
+    </div>
+  <% end %>
+<% end %>
+```
+
+### Edit Section Template
+
+```erb
+<!-- app/views/[entiteiten]/section_[sectie_naam]/edit.html.erb -->
+<%= turbo_frame_tag :[entiteit]_[sectie_naam] do %>
+  <%= ui.section.page :[entiteit]_[sectie_naam] do |p| %>
+    <% p.with_heading { ui.heading :h2, "[Sectie Titel] bewerken" } %>
+    <% p.with_actions do %>
+      <%= ui.button icon_left: "cross", href: [entiteit]_section_[sectie_naam]_path(@[entiteit]),
+          size: :sm, style: :tertiary,
+          data: { turbo_frame: "[entiteit]_[sectie_naam]", turbo_action: "advance" } %>
+    <% end %>
+
+    <%= form_with(model: @[entiteit],
+        url: [entiteit]_section_[sectie_naam]_path(@[entiteit]),
+        builder: Pulse::FormBuilder,
+        show_labels: false,
+        data: { turbo_frame: "[entiteit]_[sectie_naam]" }) do |form| %>
+
+      <%= render "form", form: form %>
+
+      <%= ui.form.actions do %>
+        <%= form.submit "Opslaan", style: :primary %>
+        <%= ui.button "Annuleren", href: [entiteit]_section_[sectie_naam]_path(@[entiteit]), style: :secondary %>
+      <% end %>
+    <% end %>
+  <% end %>
+<% end %>
+```
+
+## 5. Routes Configuration
+
+### Nested Resources Pattern
+
+```ruby
+# config/routes.rb
+resources :[entiteiten] do
+  # Single resource sections
+  resource :section_[sectie_naam], only: [:show, :edit, :update],
+    controller: "[entiteiten]/section_[sectie_naam]"
+
+  # Collection sections
+  resources :section_[collection], only: [:index],
+    controller: "[entiteiten]/section_[collection]"
+end
+```
+
+**Generated Routes:**
+- `[entiteit]_section_[sectie_naam]_path(@[entiteit])` → `/[entiteiten]/:id/section_[sectie_naam]`
+- `edit_[entiteit]_section_[sectie_naam]_path(@[entiteit])` → `/[entiteiten]/:id/section_[sectie_naam]/edit`
+- `[entiteit]_section_[collection]_path(@[entiteit])` → `/[entiteiten]/:id/section_[collection]`
+
+## 6. Main Controller Setup
+
+De hoofdcontroller blijft simpel:
+
+```ruby
+# app/controllers/[entiteiten]_controller.rb
+class [Entiteiten]Controller < ApplicationController
+  before_action :set_breadcrumbs, only: [:show, :edit, :create, :update]
+
+  def show
+    @[entiteit] = [Entiteit].find(params[:id])
+  end
+
+  # ... andere actions (index, new, create, edit, update, destroy)
+
+  private
+
+  def set_breadcrumbs
+    add_breadcrumb "[Entiteiten]", [entiteiten]_path(q: filters.get(:[entiteiten]))
+  end
+end
+```
+
+## 7. Performance & Loading Strategy
+
+### Direct Load vs Lazy Load
+
+**Direct Load** (kleine/belangrijke content):
+```erb
+<%= turbo_frame_tag :[sectie_id] do %>
+  <%= render template: "[entiteiten]/section_[sectie_naam]/show" %>
+<% end %>
+```
+
+**Lazy Load** (grote/minder belangrijke content):
+```erb
+<%= turbo_frame_tag :[sectie_id], src: [entiteit]_section_[sectie_naam]_path(@[entiteit]) do %>
+  loading [sectie_beschrijving]...
+<% end %>
+```
+
+### Wanneer welke strategie?
+
+**Direct Load voor:**
+- Summary/details informatie
+- Kleine datasets
+- Altijd zichtbare content
+- Critical path content
+
+**Lazy Load voor:**
+- Gerelateerde collections
+- Grote datasets
+- Optionele content
+- Performance optimization
+
+## 8. Advanced Features (Optioneel)
+
+Voor complexere pagina's kun je deze features toevoegen:
+
+### Sticky Navigation met Scroll Tracking
+
+```erb
+<%= ui.page title: @[entiteit].display_name, breadcrumbs: breadcrumbs,
+    data: { controller: "scroll-tracker" } do |p| %>
+
+  <% p.with_heading { ui.heading(:h1, "#{@[entiteit].identifier} • #{@[entiteit].display_name}") } %>
+
+  <!-- Sticky Navigation -->
+  <ul class="flex flex-wrap gap-4 px-4 py-2 bg-bg-neutral-soft rounded-lg sticky top-4 z-8"
+      data-controller="scroll-tracker"
+      data-scroll-tracker-offset-value="100">
+    <% sections = [
+      { title: "[Sectie1 Titel]", id: "section-[sectie1]" },
+      { title: "[Sectie2 Titel]", id: "section-[sectie2]" },
+      { title: "[Sectie3 Titel]", id: "section-[sectie3]" }
+    ] %>
+    <% sections.each do |section| %>
+      <li>
+        <%= ui.link section[:title],
+            href: "##{section[:id]}",
+            class: "data-[active=true]:font-bold",
+            data: { scroll_tracker_target: "nav", active: false } %>
+      </li>
+    <% end %>
+  </ul>
+
+  <!-- Sections with scroll anchors -->
+  <%= ui.section do %>
+    <%= ui.section.page do |p| %>
+      <% p.with_heading { ui.heading(:h2, "[Sectie1 Titel]",
+          id: "section-[sectie1]",
+          class: "scroll-mt-20",
+          data: { scroll_tracker_target: "anchor" }) } %>
+      <!-- Content -->
+    <% end %>
+  <% end %>
+<% end %>
+```
+
+### Actions Dropdown
+
+```erb
+<% p.with_actions do %>
+  <%= ui.dropdown do |component| %>
+    <%= component.with_button("Acties", size: :sm, style: :primary, icon_action: "chevron-down") %>
+    <%= component.with_dropdown do %>
+      <%= ui.quick_copy "Kopieer ID", value: @[entiteit].id, size: :sm, icon_left: "id" %>
+      <%= ui.quick_copy "Kopieer [Field]", value: @[entiteit].[field], size: :sm, icon_left: "link" %>
+      <%= ui.link "Externe link", target: "_blank", icon_left: "external-link", size: :sm, href: [entiteit]_url(@[entiteit]) %>
+    <% end %>
+  <% end %>
+<% end %>
+```
+
+### Alert Section
+
+```erb
+<% if @[entiteit].[warnings_association].exists? %>
+  <%= ui.alert "Er zijn waarschuwingen voor dit [entiteit]", variant: "warning" do %>
+    <ul>
+      <% @[entiteit].[warnings_association].each do |warning| %>
+        <li><%= warning.message %></li>
+      <% end %>
+    </ul>
+  <% end %>
+<% end %>
+```
+
+## 9. Checklist voor Implementatie
+
+### Basic Setup
+- [ ] Main controller heeft show action
+- [ ] Show view gebruikt ui.page met breadcrumbs en topic
+- [ ] Sections zijn gedefinieerd met turbo frames
+- [ ] Direct vs lazy loading strategie is bepaald
+
+### Section Controllers
+- [ ] Section controllers zijn aangemaakt in juiste namespace
+- [ ] Elke section controller heeft juiste actions (show/index/edit/update)
+- [ ] turbo_frame_required is ingesteld waar nodig
+- [ ] Fields en filters zijn geconfigureerd voor collections
+- [ ] Params zijn correct gepermit voor updates
+
+### Section Templates
+- [ ] Section templates gebruiken ui.section.page pattern
+- [ ] Turbo frame tags hebben consistente naming
+- [ ] Edit templates hebben cancel/submit actions
+- [ ] Collection templates herbruiken index patterns
+- [ ] Loading states zijn geïmplementeerd
+
+### Routes
+- [ ] Nested resources zijn correct geconfigureerd
+- [ ] Resource vs resources is juist gekozen (single vs collection)
+- [ ] Controller namespaces matchen folder structure
+- [ ] Route helpers werken correct
+
+### Performance
+- [ ] Critical content wordt direct geladen
+- [ ] Large datasets worden lazy geladen
+- [ ] Includes zijn toegevoegd om N+1 queries te voorkomen
+- [ ] Caching is overwogen voor statische secties
+
+### UX & Functionality
+- [ ] Section navigation werkt binnen turbo frames
+- [ ] Edit functionaliteit werkt binnen frames
+- [ ] Loading states geven feedback
+- [ ] Error handling is geïmplementeerd
+- [ ] Breadcrumbs zijn correct ingesteld
+
+## 10. Voorbeeld Implementaties
+
+### Customer Management
+- **Entiteit**: `customer` / `customers`
+- **Secties**: `summary` (contact info), `orders` (collection)
+- **Controllers**: `Customers::SectionSummaryController`, `Customers::SectionOrdersController`
+- **Frame IDs**: `customer_summary`, `customer_orders`
+
+### Product Catalog
+- **Entiteit**: `product` / `products`
+- **Secties**: `details` (specs), `orders` (sales), `reviews` (feedback)
+- **Controllers**: `Products::SectionDetailsController`, `Products::SectionOrdersController`, `Products::SectionReviewsController`
+- **Frame IDs**: `product_details`, `product_orders`, `product_reviews`
+
+### Order Management
+- **Entiteit**: `order` / `orders`
+- **Secties**: `summary` (basic info), `items` (line items), `payments` (transactions)
+- **Controllers**: `Orders::SectionSummaryController`, `Orders::SectionItemsController`, `Orders::SectionPaymentsController`
+- **Frame IDs**: `order_summary`, `order_items`, `order_payments`
+
+## 11. Replacement Guide
+
+Bij het gebruiken van dit patroon, vervang:
+
+- `[entiteit]` → `customer`, `product`, `order`, `user`, `category`
+- `[entiteiten]` → `customers`, `products`, `orders`, `users`, `categories`
+- `[Entiteit]` → `Customer`, `Product`, `Order`, `User`, `Category`
+- `[Entiteiten]` → `Customers`, `Products`, `Orders`, `Users`, `Categories`
+- `[sectie_id]` → `customer_summary`, `product_details`, `order_items`
+- `[sectie_naam]` → `summary`, `details`, `orders`, `items`, `reviews`
+- `[sectie1]`, `[sectie2]` → specifieke sectie namen
+- `[Sectie Titel]` → "Gegevens", "Bestellingen", "Details", "Reviews"
+- `[association]` → `orders`, `products`, `reviews`, `items`
+- `[collection]` → `orders`, `products`, `reviews`, `items`
+- `[Collection]` → `Orders`, `Products`, `Reviews`, `Items`
+- `[attribuut1]` → `name`, `title`, `status`, `email`
+- `[field]`, `[field1]` → `name`, `sku`, `status`, `date`
+- `[RelatedModel]` → `Customer`, `Category`, `Supplier`
+- `[display_field]` → `name`, `title`, `identifier`
+
+## 12. Best Practices
+
+### Content Organization
+- **Logische volgorde**: Belangrijkste informatie eerst (summary)
+- **Performance first**: Lazy load waar mogelijk
+- **User focused**: Meest gebruikte secties prominent
+
+### Controller Organization
+- **Single responsibility**: Elke section controller voor één concern
+- **Consistent naming**: Volg [Entiteit]::Section[Naam]Controller pattern
+- **Proper redirects**: turbo_frame_required voor section-only controllers
+
+### Template Organization
+- **Modular templates**: Elke sectie in eigen template file
+- **Consistent structure**: Hergebruik ui.section.page pattern
+- **Frame consistency**: Zelfde frame names in alle templates
+
+### Routing Strategy
+- **Nested resources**: Gebruik nested routes voor sections
+- **RESTful actions**: Volg Rails conventions (show/index/edit/update)
+- **Logical grouping**: Group related section routes samen
+
+Dit patroon biedt een flexibele, performante en onderhoudbare basis voor alle detail pagina's in de applicatie.

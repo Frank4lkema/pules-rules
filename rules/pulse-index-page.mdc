@@ -1,0 +1,659 @@
+---
+name: pulse_index_page
+description: "Standards for implementing Pulse Index pages version: 2.0.0"
+author: Frank
+date: 2025-08-24
+globs:
+alwaysApply: true
+---
+# Pulse Index Page Pattern
+
+Dit document beschrijft het herbruikbare patroon voor het creëren van Rails index pagina's met uitgebreide filter- en zoekfunctionaliteit.
+
+## Overzicht
+
+Een complete index pagina bestaat uit drie hoofdcomponenten:
+1. **Hoofdpagina** (`index.html.erb`) - Container en layout
+2. **Filters formulier** (`_filters_form.html.erb`) - Zoek- en filterfunctionaliteit
+3. **Resultaten** (`_results.html.erb`) - Tabel met gefilterde data
+
+## 1. Hoofdpagina (index.html.erb)
+
+```erb
+<%= ui.page breadcrumbs: breadcrumbs, title: "[entiteiten_titel]", topic: current_topic do |p| %>
+  <% p.with_heading { ui.heading(:h1, "[pagina_titel]") } %>
+  <% p.with_actions do %>
+    <%= ui.button "[entiteit] aanmaken", icon_left: "plus", style: :primary, variant: :success, size: :sm, href: new_[entiteit]_path %>
+  <% end %>
+
+  <div class="flex flex-col gap-3" data-controller="multi-check reveal">
+    <!-- Bulk Actions Bar - Alleen zichtbaar bij selectie -->
+    <%= ui.action_bar sticky: true, contained: true, hidden: true, "data-multi-check-target": "reveal", "data-multi-check-condition": "count > 0" do |action_bar| %>
+      <% action_bar.with_actions do %>
+        <%= render "results_actions", id: "[entiteit]_actions_bulk", selected: true %>
+      <% end %>
+      <span data-multi-check-target="counter">0</span> selected
+    <% end %>
+
+    <!-- Normal Actions Bar - Verborgen bij selectie -->
+    <%= ui.action_bar stacked: true, "data-multi-check-target": "visible", "data-multi-check-condition": "count == 0" do |action_bar| %>
+      <% action_bar.with_actions do %>
+        <%= render "results_actions", id: "[entiteit]_actions" %>
+      <% end %>
+      <%= render "filters_form" %>
+    <% end %>
+
+    <!-- Results Frame met Action Updates -->
+    <%= turbo_frame_tag 'results', target: '_top', class: "contents" do %>
+      <turbo-stream action="replace" target="[entiteit]_actions" class="hidden">
+        <template><%= render "results_actions", id: "[entiteit]_actions" %></template>
+      </turbo-stream>
+      <turbo-stream action="replace" target="[entiteit]_actions_bulk" class="hidden">
+        <template><%= render "results_actions", id: "[entiteit]_actions_bulk", selected: true %></template>
+      </turbo-stream>
+
+      <%= render "results" %>
+    <% end %>
+  </div>
+<% end %>
+```
+
+### Verplichte elementen:
+- `ui.page` met breadcrumbs, title, en topic
+- Page actions voor create functionality
+- `data-controller="multi-check reveal"` voor bulk operaties
+- Dual action bars (normal en bulk)
+- `turbo_frame_tag "results"` voor dynamische updates
+- Action updates via turbo-stream
+
+## 2. Filters Formulier (_filters_form.html.erb)
+
+### Basis structuur
+
+```erb
+<%= search_form_for(@q,
+  builder: Pulse::FormBuilder,
+  show_labels: false,
+  inline: true,
+  size: :sm,
+  data: { controller: 'auto-submit reveal-form', turbo_frame: 'results', turbo_action: "advance" },
+  html: { class: "contents" }
+) do |form| %>
+
+  <!-- Primary Filters -->
+  <%= form.select :status_eq, [["Active", true], ["Inactive", false]],
+      { width: :sm, include_blank: "Alle [entiteiten]" },
+      data: { action: "reveal-form#refresh auto-submit#submit" } %>
+
+  <!-- Advanced Search Input -->
+  <%= ui.form.input icon_left: "filter", width: :xl, placeholder: "Filter op [entiteiten]...", size: :sm, data: {
+    controller: "search-select",
+    search_select_base_url_value: [entiteiten]_path,
+    search_select_config_value: [
+      {
+        group: "Status",
+        options: [Model].statuses.map { |key, value| { label: key, value: value } },
+        target: "q[status_in][]"
+      },
+      {
+        group: "[AssociatieModel]",
+        url: [associatie_entiteiten]_path,
+        search: "q[naam_cont]",
+        key: "id",
+        label: "naam",
+        target: "q[[associatie]_id_in][]"
+      }
+    ]
+  } %>
+
+  <!-- Secondary Filters Button -->
+  <%= ui.button icon_left: "filter", style: :secondary, size: :sm,
+      data: { "event-name-param": "dialog:open#filters-drawer", action: "click->event#dispatch:prevent" } do %>
+    <span class="hidden md:block">Filters</span>
+  <% end %>
+
+  <!-- Fields Dropdown -->
+  <%= ui.dropdown do |component| %>
+    <%= component.with_button(ui.icon("table-options", size: :sm), icon_action: "chevron-down", size: :sm, style: :secondary) %>
+    <%= component.with_dropdown do %>
+      <div class="flex flex-col gap-0 mb-2">
+        <% @f.entries.each do |entry| %>
+          <%= ui.form.switch name: "f[]", size: :xs, **entry, data: { action: "auto-submit#submit" } %>
+        <% end %>
+      </div>
+      <%= ui.divider(label: "Presets", intensity: :soft) %>
+      <div class="flex flex-col gap-0">
+        <%= ui.link "Compact", icon_left: "layout-grid", href: [entiteiten]_path(q: @[entiteit]_filters.to_h, f: [:status]), block: true %>
+        <%= ui.link "Gedetailleerd", icon_left: "layout-grid", href: [entiteiten]_path(q: @[entiteit]_filters.to_h, f: [:status, :naam, :created_at]), block: true %>
+      </div>
+      <%= hidden_field_tag "f[]", "x" %>
+    <% end %>
+  <% end %>
+
+  <!-- Drawer met Secondary Filters -->
+  <%= ui.dialog variant: :drawer, id: "filters-drawer" do %>
+    <%= ui.dialog.page do |p| %>
+      <% p.with_heading { ui.heading :h2, "Filters" } %>
+      <div class="flex flex-col gap-3">
+
+        <!-- Status Filter -->
+        <%= ui.collapse [Model].human_attribute_name(:status), opened: true do %>
+          <%= form.collection_select :status_in, [Model].statuses, :last, :first,
+              { include_blank: "All statuses", multiple: true, placeholder: "Search a status.." },
+              data: { action: "reveal-form#refresh auto-submit#submit", controller: "select" } %>
+        <% end %>
+
+        <!-- Conditional Text -->
+        <span class="text-xs" data-reveal-form-target="reveal" data-reveal-form-condition='q.status_in.includes("active")'>
+          Active [entiteiten] worden nog verwerkt
+        </span>
+
+        <!-- Date Range Filter -->
+        <%= ui.collapse [Model].human_attribute_name(:created_at), opened: true do %>
+          <%= ui.form.group seperator: "t/m", data: { "reveal-form-target": "enable", "reveal-form-condition": 'q.created_at_null == "0"' } do |group| %>
+            <% group.with_input { form.date_field :created_at_gteq, data: { action: "auto-submit#submit" } } %>
+            <% group.with_input { form.date_field :created_at_lteq, data: { action: "auto-submit#submit" } } %>
+          <% end %>
+          <%= form.check_box :created_at_null, label: "Geen", data: { action: "reveal-form#refresh auto-submit#submit" } %>
+        <% end %>
+
+        <!-- Association Filter -->
+        <%= ui.collapse [Model].human_attribute_name(:[associatie]_id), opened: true do %>
+          <%= form.select :[associatie]_id_in,
+            @[entiteit]_filters.data(:[associatie]_id_in),
+            { multiple: true, placeholder: "Zoek [associatie]..", icon_left: "magnifier" },
+            data: {
+              controller: "select",
+              select_config_value: {
+                url: [associatie_entiteiten]_path,
+                search: "q[naam_cont]",
+                key: "id",
+                label: "naam",
+                target: "q[[associatie]_id_in][]"
+              },
+              action: 'auto-submit#submit'
+            } %>
+        <% end %>
+
+      </div>
+      <% p.with_actions do %>
+        <%= ui.button "Zoeken", style: :primary, block: true, data: { turbo_frame: false } %>
+      <% end %>
+    <% end %>
+  <% end %>
+
+<% end %>
+```
+
+### Nieuwe patronen:
+- **Advanced search**: `search-select` controller voor geavanceerd zoeken
+- **Reveal-form**: Conditionele zichtbaarheid van form elementen
+- **Field presets**: Voorgedefinieerde kolom combinaties
+
+## 3. Resultaten (_results.html.erb)
+
+### Selected Filters
+
+```erb
+<%= ui.active_filter_group max: 3, "data-multi-check-target": "visible", "data-multi-check-condition": "count == 0" do |group| %>
+  <%= group.with_filter(@[entiteit]_filters.to_h, "[filter_label]", :[parameter], @[entiteit]_filters.data(:[parameter]), max: 3) %>
+  <%= group.with_filter(@[entiteit]_filters.to_h, "[filter_label]", :[parameter]_null, { "1" => "Geen" }, exclude: ["0"]) %>
+  <%= group.with_button(data: { "event-name-param": "dialog:open#filters-drawer", action: "click->event#dispatch:prevent" }) %>
+<% end %>
+```
+
+### Resultaten Tabel met Multi-Select
+
+```erb
+<%= ui.table hover: true do |table| %>
+  <thead>
+    <tr>
+      <!-- Multi-select checkbox -->
+      <th class="<%= table.cls(:th, class: "w-1 px-0") %>">
+        <%= ui.form.checkbox "data-multi-check-target": "checkboxAll" %>
+      </th>
+      <!-- ID kolom -->
+      <th class="<%= table.cls(:th, class: "w-20 text-center") %>">
+        <%= sort_link(@q, :id, "ID") %>
+      </th>
+      <!-- Conditionele kolommen -->
+      <% if @f.include?(:[veld_naam]) %>
+        <th class="<%= table.cls(:th, class: "[extra_classes]") %>">
+          <%= sort_link(@q, :[sort_veld], "[kolom_titel]") %>
+        </th>
+      <% end %>
+      <!-- Actions kolom -->
+      <th class="<%= table.cls(:th, class: "w-1") %>"></th>
+    </tr>
+  </thead>
+  <tbody>
+    <% @[entiteiten].each do |[entiteit]| %>
+      <tr class="<%= table.cls(:tr, class: "row") %>" data-controller="calculate">
+        <!-- Multi-select checkbox -->
+        <td class="<%= table.cls(:td, class: "w-1 px-0") %>">
+          <%= ui.form.checkbox value: [entiteit].id, data: {
+            multi_check_target: "checkbox",
+            calculate_target: "input",
+            calculate_name: "selected",
+            action: "input->calculate#refresh"
+          } %>
+        </td>
+        <!-- ID met link -->
+        <td class="<%= table.cls(:td, class: "w-20 text-center") %>">
+          <%= ui.id_link [entiteit].id, href: [entiteit]_path([entiteit]) %>
+        </td>
+        <!-- Conditionele cellen -->
+        <% if @f.include?(:[veld_naam]) %>
+          <td class="<%= table.cls(:td, class: "[extra_classes]") %>">
+            <!-- Cel inhoud met mogelijke inline editing -->
+            <%= render "inline_edit/[entiteiten]/[veld]", [entiteit]: [entiteit] %>
+          </td>
+        <% end %>
+        <!-- Actions dropdown -->
+        <td class="<%= table.cls(:td, class: "p-0") %>">
+          <%= ui.dropdown strategy: :fixed, placement: "bottom-end" do |component| %>
+            <%= component.with_button(ui.icon("dots-vertical", size: :sm), style: :tertiary, size: :xs, icon_only: true) %>
+            <%= component.with_dropdown do %>
+              <%= ui.link "Bewerken", href: edit_[entiteit]_path([entiteit]), icon_left: "pencil", size: :sm %>
+              <%= ui.link "Verwijderen", href: [entiteit]_path([entiteit]), variant: :danger, icon_left: "trash", size: :sm, data: { turbo_method: :delete, turbo_confirm: "Weet je het zeker?" } %>
+            <% end %>
+          <% end %>
+        </td>
+      </tr>
+    <% end %>
+  </tbody>
+
+  <!-- Tabel Footer met Berekeningen -->
+  <% if @f.include?(:total) %>
+    <tfoot>
+      <!-- Normal footer -->
+      <tr class="<%= table.cls(:tfoot_tr) %>" data-multi-check-target="reveal" data-multi-check-condition="count == 0">
+        <td colspan="[column_count]" class="<%= table.cls(:tfoot_td) %>">
+          <div class="flex items-center gap-1">
+            Totaal
+            <span class="text-fg-muted text-xs"><%= @[entiteiten]_total_count %> [entiteiten]</span>
+          </div>
+        </td>
+        <td class="<%= table.cls(:tfoot_td, class: "text-right") %>">
+          <%= ui.money @[entiteiten]_total_sum %>
+        </td>
+        <td colspan="auto" class="<%= table.cls(:tfoot_td) %>"></td>
+      </tr>
+
+      <!-- Selected footer -->
+      <tr class="<%= table.cls(:tfoot_tr, class: "hidden") %>" data-multi-check-target="reveal" data-multi-check-condition="count > 0" data-controller="calculate" data-calculate-calculate-outlet=".row">
+        <td colspan="[column_count]" class="<%= table.cls(:tfoot_td) %>">
+          <div class="flex items-center gap-1">
+            Totaal
+            <span class="text-fg-muted text-xs">
+              <%= ui.badge style: :deep, color: :orange, size: :xs do %>
+                <span data-multi-check-target="counter">0</span>
+              <% end %>
+            </span> [entiteit](en)
+          </div>
+        </td>
+        <td class="<%= table.cls(:tfoot_td, class: "text-right") %>">
+          <span data-calculate-target="input" data-calculate-name="totalsum" data-calculate-format="euro" data-calculate-expression="sum(outlets, 'selected ? total : 0')"></span>
+        </td>
+        <td colspan="auto" class="<%= table.cls(:tfoot_td) %>"></td>
+      </tr>
+    </tfoot>
+  <% end %>
+<% end %>
+```
+
+### Paginatie
+
+```erb
+<%= ui.pagination @metadata, data: { turbo_action: "advance" } %>
+```
+
+## 4. Controller Implementation
+
+### 4.1 Basis Controller Setup
+
+```ruby
+class [Entiteiten]Controller < ApplicationController
+  before_action :set_breadcrumbs, only: [:show, :edit, :create, :update]
+
+  def index
+    @q = [Model].includes([associaties]).ransack([entiteit]_filters.to_h)
+    @q.sorts = "[default_sort] [richting]" if @q.sorts.empty?
+
+    @f = [entiteit]_fields
+
+    # Business logic calculations
+    @[entiteiten]_total_sum = @q.result.joins([joins]).sum("[berekening_veld]")
+    @[entiteiten]_total_count = @q.result.count
+
+    @metadata, @[entiteiten] = paginate(@q.result, limit_max: 200)
+
+    respond_to do |format|
+      format.html
+      format.json do
+        render json: @[entiteiten].map { |[entiteit]| [entiteit].attributes.merge(human_name: [entiteit].human_name) }
+      end
+    end
+  end
+
+  # ... other actions ...
+
+  private
+
+  def set_breadcrumbs
+    add_breadcrumb "[Entiteiten]", [entiteiten]_path(q: filters.get(:[entiteiten]))
+  end
+
+    def [entiteit]_fields
+      fields.permit(
+        # Alle beschikbare velden
+        :[veld1],
+        :[veld2],
+        :[veld3],
+        :[totaal]
+      ).require(
+        # Verplichte velden die altijd getoond worden
+        :[verplicht_veld1],
+        :[verplicht_veld2]
+      ).default(
+        # Default zichtbare velden
+        :[default_veld1],
+        :[default_veld2],
+        :[default_veld3]
+      ).from(:[entiteit]).store(:[entiteiten])
+    end
+
+    def [entiteit]_filters
+      @[entiteit]_filters ||= filters.initial(
+        # Default filter waarden
+        status_in: [[Model].statuses["actief"], [Model].statuses["lopend"]],
+        created_at_gteq: [Model].maximum(:created_at).to_date - 2.months
+      ).dataloaders(
+        # Dataloaders voor filter dropdowns
+        [associatie]_id_in: ->(ids) { [AssociatieModel].where(id: ids).pluck(:[weergave_veld], :id) },
+        [veld]_in: ->(values) { [Model].where([veld]: values).pluck(:[veld]) },
+        [geneste_associatie]_[veld]_in: ->(ids) { [GenesTeModel].where(id: ids).pluck(:[weergave_veld], :id) }
+      ).store(:[entiteiten])
+    end
+end
+```
+
+### 4.2 Nieuwe Pulse Methods
+
+**BELANGRIJK:** Pulse biedt nu uitgebreidere helper methods:
+
+**Fields Management:**
+- `fields.permit().require().default().from().store()` - Complete field configuratie
+- `.from()` - Specificeer de vorm bron voor field configuratie
+
+**Filters Management:**
+- `filters.initial().dataloaders().store()` - Complete filter configuratie
+- `.initial()` - Stel default filter waarden in
+- `.dataloaders()` - Configureer data providers voor dropdowns
+
+**Dataloaders patterns:**
+```ruby
+# Voor related models met ID's
+[model]_id_in: ->(ids) {
+  [Model].where(id: ids).pluck(:[display_field], :id)
+}
+
+# Voor enum waarden
+[field]_in: ->(values) {
+  [Model].where([field]: values).pluck(:[field])
+}
+
+# Voor nested associations
+[association]_[nested_field]_in: ->(ids) {
+  [Model].joins(:[association]).where([association]: { id: ids }).pluck("[association].[display_field]", "[association].id")
+}
+```
+
+## 5. Advanced Features
+
+### 5.1 Multi-Select & Bulk Operations
+
+```erb
+<!-- In hoofdpagina -->
+<div class="flex flex-col gap-3" data-controller="multi-check reveal">
+  <!-- Bulk actions bar wordt getoond bij selectie -->
+  <%= ui.action_bar sticky: true, contained: true, hidden: true, "data-multi-check-target": "reveal", "data-multi-check-condition": "count > 0" do |action_bar| %>
+    <% action_bar.with_actions do %>
+      <%= ui.button "Bewerken", style: :ghost, icon_left: "pencil" %>
+      <%= ui.button "Verwijderen", style: :ghost, variant: :danger, icon_left: "trash" %>
+    <% end %>
+    <span data-multi-check-target="counter">0</span> selected
+  <% end %>
+</div>
+```
+
+### 5.2 Advanced Search
+
+```erb
+<!-- Search-select voor complexe zoekfunctionaliteit -->
+<%= ui.form.input data: {
+  controller: "search-select",
+  search_select_config_value: [
+    {
+      group: "[AssociatieGroep]",
+      url: [associatie_entiteiten]_path,
+      search: "q[naam_cont]",
+      key: "id",
+      label: "naam",
+      target: "q[[associatie]_id_in][]"
+    }
+  ]
+} %>
+```
+
+### 5.3 Inline Editing
+
+```erb
+<!-- In tabel cel -->
+<td class="<%= table.cls(:td) %>">
+  <%= render "inline_edit/[entiteiten]/[veld]", [entiteit]: [entiteit] %>
+</td>
+```
+
+### 5.4 Dynamic Calculations
+
+```erb
+<!-- Voor real-time berekeningen -->
+<tr data-controller="calculate">
+  <td>
+    <span data-amount="<%= [entiteit].total %>"
+          data-calculate-target="input"
+          data-calculate-name="total"
+          data-calculate-attribute="amount">
+      <%= [entiteit].total %>
+    </span>
+  </td>
+</tr>
+
+<!-- Footer met berekening -->
+<td>
+  <span data-calculate-target="input"
+        data-calculate-name="totalsum"
+        data-calculate-format="euro"
+        data-calculate-expression="sum(outlets, 'selected ? total : 0')"></span>
+</td>
+```
+
+## 6. Checklist voor Implementatie
+
+### Controller Setup
+- [ ] Controller heeft index action met includes en business logic
+- [ ] [entity]_fields method is geïmplementeerd met permit/require/default/from/store
+- [ ] [entity]_filters method is geïmplementeerd met initial/dataloaders/store
+- [ ] Layout conditional is ingesteld voor XHR requests
+- [ ] Default sorting is ingesteld (@q.sorts)
+- [ ] Business calculations zijn geïmplementeerd (totals, counts)
+- [ ] JSON response is geconfigureerd met human_name
+- [ ] Pagination met limit_max is ingesteld
+
+### Model Setup
+- [ ] Ransack is geconfigureerd (ransackable_attributes/associations)
+- [ ] Display methods zijn geïmplementeerd (human_name, display_name)
+- [ ] Enum statuses zijn gedefinieerd waar van toepassing
+- [ ] Model associations zijn correct gedefinieerd voor includes
+
+### Routes Setup
+- [ ] Index route is ingesteld
+- [ ] Namespace is correct geconfigureerd
+- [ ] Nested routes zijn geconfigureerd voor sections
+
+### Views - Hoofdpagina
+- [ ] ui.page met breadcrumbs, title, en topic
+- [ ] Page actions zijn toegevoegd (create button)
+- [ ] Multi-check controller is toegevoegd
+- [ ] Dual action bars (normal en bulk) zijn geïmplementeerd
+- [ ] turbo_frame_tag "results" met action updates
+- [ ] Reveal controller is toegevoegd
+
+### Views - Filters Form
+- [ ] search_form_for is correct geconfigureerd met reveal-form controller
+- [ ] Pulse::FormBuilder wordt gebruikt
+- [ ] Primary filters werken met auto-submit
+- [ ] Advanced search input is geïmplementeerd (search-select)
+- [ ] Secondary filters drawer is geïmplementeerd
+- [ ] Fields dropdown met presets is geïmplementeerd
+- [ ] Conditionele form elementen werken (reveal-form)
+
+### Views - Results
+- [ ] Selected filters worden getoond met max en exclude opties
+- [ ] Multi-select checkboxes zijn geïmplementeerd
+- [ ] Resultaten tabel met conditionele kolommen
+- [ ] Sort links functioneren in tabel headers
+- [ ] Actions dropdown per rij
+- [ ] Tabel footer met berekeningen (normal en selected)
+- [ ] Calculate controller voor real-time berekeningen
+- [ ] Paginatie met turbo_action advance
+
+### Advanced Features
+- [ ] Multi-check functionaliteit werkt correct
+- [ ] Bulk operations zijn geïmplementeerd
+- [ ] Advanced search (search-select) functioneert
+- [ ] Inline editing werkt waar van toepassing
+- [ ] Dynamic calculations functioneren
+- [ ] Field visibility toggle werkt
+- [ ] Responsive design op alle schermgroottes
+
+### Performance & UX
+- [ ] N+1 queries zijn voorkomen met includes
+- [ ] Business logic calculations zijn geoptimaliseerd
+- [ ] limit_max is ingesteld voor grote datasets
+- [ ] Turbo frame updates werken smooth
+- [ ] Loading states zijn geïmplementeerd
+- [ ] Error states zijn graceful afgehandeld
+
+### Testing & Integration
+- [ ] Primary en secondary filters filteren correct
+- [ ] Advanced search filtert resultaten correct
+- [ ] Multi-select en bulk operations functioneren
+- [ ] Field visibility behoudt state
+- [ ] Selected filters tonen en zijn verwijderbaar
+- [ ] Paginatie behoudt alle filters en fields
+- [ ] Sort functies behouden filters
+- [ ] URL state wordt behouden (turbo_action: advance)
+- [ ] Business calculations zijn accuraat
+
+## 7. Voorbeeld Vervangingen
+
+Bij het gebruiken van dit patroon, vervang:
+
+### Basis Entiteit Replacements
+- `[entiteiten_titel]` → "Orders", "Producten", "Klanten"
+- `[pagina_titel]` → "Orders", "Productoverzicht", "Klantenbeheer"
+- `[entiteit]` → `order`, `product`, `customer`, `user`
+- `[entiteiten]` → `orders`, `products`, `customers`, `users`
+- `[Entiteiten]` → `Orders`, `Products`, `Customers`, `Users`
+- `[Model]` → `Order`, `Product`, `Customer`, `User`
+
+### Path & Route Replacements
+- `[entiteiten]_path` → `orders_path`, `products_path`, `customers_path`
+- `[entiteit]_path` → `order_path`, `product_path`, `customer_path`
+- `edit_[entiteit]_path` → `edit_order_path`, `edit_product_path`
+- `new_[entiteit]_path` → `new_order_path`, `new_product_path`
+
+### Field & Filter Replacements
+- `[veld_naam]` → `:status`, `:naam`, `:created_at`, `:actief`
+- `[veld1]`, `[veld2]` → `:status`, `:naam`, `:email`, `:bedrag`
+- `[kolom_titel]` → "Status", "Naam", "Datum", "Bedrag"
+- `[filter_label]` → "Status", "Categorie", "Datum", "Klant"
+- `[sort_veld]` → `:id`, `:naam`, `:created_at`, `:status`
+
+### Association Replacements
+- `[associatie]` → `klant`, `categorie`, `leverancier`, `gebruiker`
+- `[associatie_entiteiten]_path` → `klanten_path`, `categorien_path`
+- `[AssociatieModel]` → `Klant`, `Categorie`, `Leverancier`
+- `[AssociatieGroep]` → "Klanten", "Categorieën", "Leveranciers"
+- `[weergave_veld]` → `:naam`, `:titel`, `:beschrijving`
+
+### Technical Replacements
+- `[default_sort]` → `id`, `naam`, `created_at`
+- `[richting]` → `desc`, `asc`
+- `[berekening_veld]` → `:bedrag`, `:aantal`, `:waarde`
+- `[joins]` → `:klant`, `:categorie`, `:order_items`
+- `[associaties]` → `:klant`, `:categorie`, `{ order_items: :product }`
+
+## 8. Troubleshooting & Best Practices
+
+### Common Issues
+
+**Issue: Filters worden niet behouden na paginatie**
+```ruby
+# Oplossing: Zorg dat turbo_action: "advance" is ingesteld
+<%= ui.pagination @metadata, data: { turbo_action: "advance" } %>
+```
+
+**Issue: Multi-select werkt niet**
+```erb
+# Zorg ervoor dat data-controller="multi-check" is ingesteld op container
+<div data-controller="multi-check reveal">
+```
+
+**Issue: Advanced search werkt niet**
+```erb
+# Controleer search-select configuratie
+data: {
+  controller: "search-select",
+  search_select_base_url_value: [entiteiten]_path,
+  search_select_config_value: valid_json_config
+}
+```
+
+**Issue: Performance problemen met grote datasets**
+```ruby
+# Voeg includes toe en gebruik limit_max
+@q = Model.includes(:association1, :association2).ransack(filters.to_h)
+@metadata, @entities = paginate(@q.result, limit_max: 200)
+```
+
+### Best Practices
+
+**1. Pulse Helper Methods**
+- Gebruik `fields.permit().require().default().from().store()` voor field management
+- Gebruik `filters.initial().dataloaders().store()` voor filter management
+- Gebruik `paginate(@q.result, limit_max: 200)` voor pagination
+- Dataloaders zijn lambdas die data ophalen voor dropdowns
+
+**2. Performance**
+- Implementeer eager loading voor alle gebruikte associaties
+- Gebruik business logic calculations in controller, niet in views
+- Cache expensive operations waar mogelijk
+- Monitor query performance met tools zoals Bullet
+
+**3. UX Guidelines**
+- Auto-submit bij alle filter changes
+- Multi-select voor bulk operations
+- Conditionele UI elementen (reveal-form)
+- Responsive design vanaf mobile-first
+- Consistent gebruik van UI components
+
+**4. Advanced Features**
+- Search-select voor complexe zoekfunctionaliteit
+- Inline editing voor quick updates
+- Real-time calculations met calculate controller
+- Dual action bars voor context-aware actions
+
+Dit patroon biedt een complete en geavanceerde interface voor alle index pagina's in de applicatie, met focus op gebruiksvriendelijkheid en performance.

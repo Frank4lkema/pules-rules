@@ -1,0 +1,532 @@
+---
+name: pulse_filters_form_partial
+description: Standards for implementing Pulse filters form partials with advanced search and filter functionality
+version: 2.0.0
+author: Frank
+date: 2025-08-24
+globs:
+  - "app/views/**/_filters_form.html.erb"
+  - "app/views/**/filters_form.html.erb"
+  - "app/views/**/*_filters.html.erb"
+tags:
+  - pulse
+  - filters
+  - forms
+  - ui-components
+  - erb
+---
+
+# Pulse Filters Form Partial Pattern
+
+Dit document beschrijft het herbruikbare patroon voor het creëren van geavanceerde filter formulieren met Pulse UI componenten.
+
+## Overzicht
+
+Een filters form partial bestaat uit:
+1. **Primary Filters** - Direct zichtbare filters (select, search)
+2. **Advanced Search** - Search-select component voor complexe zoekopdrachten
+3. **Secondary Filters** - Drawer met geavanceerde filter opties
+4. **Field Toggles** - Dropdown voor kolom zichtbaarheid
+5. **Form Controllers** - Auto-submit en reveal-form functionaliteit
+
+## 1. Basis Filters Form Structure
+
+### Hoofdstructuur (_filters_form.html.erb)
+
+```erb
+<%= search_form_for(@q,
+  builder: Pulse::FormBuilder,
+  show_labels: false,
+  inline: true,
+  size: :sm,
+  data: { controller: 'auto-submit reveal-form', turbo_frame: 'results', turbo_action: "advance" },
+  html: { class: "contents" }
+) do |form| %>
+
+  <!-- Primary Filters -->
+  <%= form.select :[filter_field]_eq, [filter_options],
+      { width: :sm, include_blank: "Alle [entiteiten]" },
+      data: { action: "reveal-form#refresh auto-submit#submit" } %>
+
+  <!-- Advanced Search Input -->
+  <%= ui.form.input icon_left: "filter", width: :xl, placeholder: "Filter op [entiteiten]...", size: :sm, data: {
+    controller: "search-select",
+    search_select_base_url_value: [entiteiten]_path,
+    search_select_config_value: [search_config_json]
+  } %>
+
+  <!-- Secondary Filters Button -->
+  <%= ui.button icon_left: "filter", style: :secondary, size: :sm,
+      data: { "event-name-param": "dialog:open#filters-drawer", action: "click->event#dispatch:prevent" } do %>
+    <span class="hidden md:block">Filters</span>
+  <% end %>
+
+  <!-- Fields Dropdown -->
+  <%= render "fields_dropdown" %>
+
+  <!-- Secondary Filters Drawer -->
+  <%= render "filters_drawer", form: form %>
+
+<% end %>
+```
+
+### Verplichte elementen:
+- `search_form_for(@q)` met Pulse::FormBuilder
+- `data-controller="auto-submit reveal-form"` voor functionaliteit
+- `turbo_frame: 'results'` voor dynamische updates
+- Primary filters met auto-submit actions
+- Search-select configuratie voor advanced search
+
+## 2. Primary Filters Patterns
+
+### Select Filter
+
+```erb
+<%= form.select :[filter_field]_eq, [filter_options],
+    { width: :sm, include_blank: "Alle [entiteiten]" },
+    data: { action: "reveal-form#refresh auto-submit#submit" } %>
+```
+
+### Multi-Select Filter
+
+```erb
+<%= form.select :[filter_field]_in, [filter_options],
+    { multiple: true, width: :md, placeholder: "Selecteer [filter_naam]" },
+    data: { action: "reveal-form#refresh auto-submit#submit", controller: "select" } %>
+```
+
+### Date Filter
+
+```erb
+<%= form.date_field :[date_field]_gteq,
+    { width: :sm, placeholder: "Van datum" },
+    data: { action: "auto-submit#submit" } %>
+```
+
+### Search Field
+
+```erb
+<%= form.search_field :naam_cont,
+    { width: :lg, placeholder: "Zoek [entiteit]..." },
+    data: { action: "auto-submit#submit" } %>
+```
+
+## 3. Advanced Search Configuration
+
+### Search-Select Component
+
+```erb
+<%= ui.form.input icon_left: "filter", width: :xl, placeholder: "Filter op [entiteiten]...", size: :sm, data: {
+  controller: "search-select",
+  search_select_base_url_value: [entiteiten]_path,
+  search_select_config_value: [
+    {
+      group: "[Filter Groep]",
+      options: [Model].[enum_field].map { |key, value| { label: key.humanize, value: value } },
+      target: "q[[filter_field]_in][]"
+    },
+    {
+      group: "[Associatie Groep]",
+      url: [associatie_entiteiten]_path,
+      search: "q[naam_cont]",
+      key: "id",
+      label: "naam",
+      target: "q[[associatie]_id_in][]"
+    }
+  ]
+} %>
+```
+
+### Search Config Patterns
+
+**Enum Options:**
+```ruby
+{
+  group: "[Filter Groep]",
+  options: [Model].[enum_field].map { |key, value| { label: key.humanize, value: value } },
+  target: "q[[filter_field]_in][]"
+}
+```
+
+**Association Search:**
+```ruby
+{
+  group: "[Associatie Groep]",
+  url: [associatie_entiteiten]_path,
+  search: "q[naam_cont]",
+  key: "id",
+  label: "naam",
+  target: "q[[associatie]_id_in][]"
+}
+```
+
+**Static Options:**
+```ruby
+{
+  group: "[Static Groep]",
+  options: [
+    { label: "Optie 1", value: "waarde1" },
+    { label: "Optie 2", value: "waarde2" }
+  ],
+  target: "q[[filter_field]_in][]"
+}
+```
+
+## 4. Fields Dropdown Partial
+
+### _fields_dropdown.html.erb
+
+```erb
+<%= ui.dropdown do |component| %>
+  <%= component.with_button(ui.icon("table-options", size: :sm), icon_action: "chevron-down", size: :sm, style: :secondary) %>
+  <%= component.with_dropdown do %>
+    <!-- Field Toggles -->
+    <div class="flex flex-col gap-0 mb-2">
+      <% @f.entries.each do |entry| %>
+        <%= ui.form.switch name: "f[]", size: :xs, **entry, data: { action: "auto-submit#submit" } %>
+      <% end %>
+    </div>
+
+    <!-- Field Presets -->
+    <%= ui.divider(label: "Presets", intensity: :soft) %>
+    <div class="flex flex-col gap-0">
+      <%= ui.link "Compact", icon_left: "layout-grid",
+          href: [entiteiten]_path(q: @[entiteit]_filters.to_h, f: [:[compact_fields]]), block: true %>
+      <%= ui.link "Standaard", icon_left: "layout-grid",
+          href: [entiteiten]_path(q: @[entiteit]_filters.to_h, f: [:[default_fields]]), block: true %>
+      <%= ui.link "Gedetailleerd", icon_left: "layout-grid",
+          href: [entiteiten]_path(q: @[entiteit]_filters.to_h, f: [:[detailed_fields]]), block: true %>
+    </div>
+    <%= hidden_field_tag "f[]", "x" %>
+  <% end %>
+<% end %>
+```
+
+### Field Preset Patterns
+
+```erb
+<!-- Minimal Fields -->
+<%= ui.link "Compact", icon_left: "layout-grid",
+    href: [entiteiten]_path(q: @[entiteit]_filters.to_h, f: [:id, :naam]), block: true %>
+
+<!-- Standard Fields -->
+<%= ui.link "Standaard", icon_left: "layout-grid",
+    href: [entiteiten]_path(q: @[entiteit]_filters.to_h, f: [:id, :naam, :status, :created_at]), block: true %>
+
+<!-- Comprehensive Fields -->
+<%= ui.link "Gedetailleerd", icon_left: "layout-grid",
+    href: [entiteiten]_path(q: @[entiteit]_filters.to_h, f: [:id, :naam, :status, :created_at, :updated_at, :[associatie]]), block: true %>
+```
+
+## 5. Secondary Filters Drawer
+
+### _filters_drawer.html.erb
+
+```erb
+<%= ui.dialog variant: :drawer, id: "filters-drawer" do %>
+  <%= ui.dialog.page do |p| %>
+    <% p.with_heading { ui.heading :h2, "Filters" } %>
+
+    <div class="flex flex-col gap-3">
+      <!-- Status Filter -->
+      <%= render "filter_sections/status_filter", form: form %>
+
+      <!-- Date Range Filter -->
+      <%= render "filter_sections/date_range_filter", form: form %>
+
+      <!-- Association Filters -->
+      <%= render "filter_sections/association_filters", form: form %>
+
+      <!-- Boolean Filters -->
+      <%= render "filter_sections/boolean_filters", form: form %>
+    </div>
+
+    <% p.with_actions do %>
+      <%= ui.button "Zoeken", style: :primary, block: true, data: { turbo_frame: false } %>
+    <% end %>
+  <% end %>
+<% end %>
+```
+
+## 6. Filter Section Patterns
+
+### Status/Enum Filter Section
+
+```erb
+<!-- filter_sections/_status_filter.html.erb -->
+<%= ui.collapse [Model].human_attribute_name(:[enum_field]), opened: true do %>
+  <%= form.collection_select :[enum_field]_in, [Model].[enum_field], :last, :first,
+      { include_blank: "Alle [enum_field_label]", multiple: true, placeholder: "Zoek [enum_field_label].." },
+      data: { action: "reveal-form#refresh auto-submit#submit", controller: "select" } %>
+<% end %>
+
+<!-- Conditional Text -->
+<span class="text-xs" data-reveal-form-target="reveal" data-reveal-form-condition='q.[enum_field]_in.includes("[condition_value]")'>
+  [Conditional bericht bij specifieke status]
+</span>
+```
+
+### Date Range Filter Section
+
+```erb
+<!-- filter_sections/_date_range_filter.html.erb -->
+<%= ui.collapse [Model].human_attribute_name(:[date_field]), opened: true do %>
+  <%= ui.form.group seperator: "t/m", data: { "reveal-form-target": "enable", "reveal-form-condition": 'q.[date_field]_null == "0"' } do |group| %>
+    <% group.with_input { form.date_field :[date_field]_gteq, data: { action: "auto-submit#submit" } } %>
+    <% group.with_input { form.date_field :[date_field]_lteq, data: { action: "auto-submit#submit" } } %>
+  <% end %>
+
+  <%= form.check_box :[date_field]_null, label: "Geen [date_field_label]",
+      data: { action: "reveal-form#refresh auto-submit#submit" } %>
+<% end %>
+```
+
+### Association Filter Section
+
+```erb
+<!-- filter_sections/_association_filters.html.erb -->
+<%= ui.collapse [Model].human_attribute_name(:[associatie]_id), opened: true do %>
+  <%= form.select :[associatie]_id_in,
+    @[entiteit]_filters.data(:[associatie]_id_in),
+    { multiple: true, placeholder: "Zoek [associatie]..", icon_left: "magnifier" },
+    data: {
+      controller: "select",
+      select_config_value: {
+        url: [associatie_entiteiten]_path,
+        search: "q[naam_cont]",
+        key: "id",
+        label: "naam",
+        target: "q[[associatie]_id_in][]"
+      },
+      action: 'auto-submit#submit'
+    } %>
+<% end %>
+```
+
+### Boolean Filter Section
+
+```erb
+<!-- filter_sections/_boolean_filters.html.erb -->
+<%= ui.collapse [Model].human_attribute_name(:[boolean_field]), opened: true do %>
+  <div class="flex flex-col gap-2">
+    <%= form.radio_button :[boolean_field]_eq, "", checked: true, data: { action: "auto-submit#submit" } %>
+    <%= form.label :[boolean_field]_eq_empty, "Alles", class: "text-sm" %>
+
+    <%= form.radio_button :[boolean_field]_eq, true, data: { action: "auto-submit#submit" } %>
+    <%= form.label :[boolean_field]_eq_true, "Ja", class: "text-sm" %>
+
+    <%= form.radio_button :[boolean_field]_eq, false, data: { action: "auto-submit#submit" } %>
+    <%= form.label :[boolean_field]_eq_false, "Nee", class: "text-sm" %>
+  </div>
+<% end %>
+```
+
+### Custom Range Filter Section
+
+```erb
+<!-- filter_sections/_range_filter.html.erb -->
+<%= ui.collapse [Model].human_attribute_name(:[numeric_field]), opened: true do %>
+  <%= ui.form.group seperator: "tot", data: { "reveal-form-target": "enable", "reveal-form-condition": 'q.[numeric_field]_null == "0"' } do |group| %>
+    <% group.with_input { form.number_field :[numeric_field]_gteq, placeholder: "Min", data: { action: "auto-submit#submit" } } %>
+    <% group.with_input { form.number_field :[numeric_field]_lteq, placeholder: "Max", data: { action: "auto-submit#submit" } } %>
+  <% end %>
+
+  <%= form.check_box :[numeric_field]_null, label: "Geen [numeric_field_label]",
+      data: { action: "reveal-form#refresh auto-submit#submit" } %>
+<% end %>
+```
+
+## 7. Controller Integration
+
+### Filter Methods in Controller
+
+```ruby
+class [Entiteiten]Controller < ApplicationController
+  private
+
+  def [entiteit]_filters
+    @[entiteit]_filters ||= filters.initial(
+      # Default filter waarden
+      [default_field]_in: [[default_values]],
+      [date_field]_gteq: [Model].maximum(:[date_field]).to_date - 2.months
+    ).dataloaders(
+      # Dataloaders voor filter dropdowns
+      [associatie]_id_in: ->(ids) { [AssociatieModel].where(id: ids).pluck(:[weergave_veld], :id) },
+      [enum_field]_in: ->(values) { [Model].where([enum_field]: values).pluck(:[enum_field]) },
+      [nested_associatie]_[field]_in: ->(ids) { [NestedModel].where(id: ids).pluck(:[weergave_veld], :id) }
+    ).store(:[entiteiten])
+  end
+
+  def [entiteit]_fields
+    fields.permit(
+      # Alle beschikbare velden
+      :[field1], :[field2], :[field3], :[total_field]
+    ).require(
+      # Verplichte velden
+      :[required_field1], :[required_field2]
+    ).default(
+      # Default zichtbare velden
+      :[default_field1], :[default_field2], :[default_field3]
+    ).from(:[entiteit]).store(:[entiteiten])
+  end
+end
+```
+
+### Dataloader Patterns
+
+```ruby
+# Voor related models met ID's
+[model]_id_in: ->(ids) {
+  [Model].where(id: ids).pluck(:[display_field], :id)
+}
+
+# Voor enum waarden
+[enum_field]_in: ->(values) {
+  [Model].where([enum_field]: values).pluck(:[enum_field])
+}
+
+# Voor nested associations
+[association]_[nested_field]_in: ->(ids) {
+  [Model].joins(:[association]).where([association]: { id: ids })
+        .pluck("[association].[display_field]", "[association].id")
+}
+
+# Voor calculated fields
+[calculated_field]_in: ->(values) {
+  [Model].select("DISTINCT [calculated_expression] as [calculated_field]")
+        .where([calculated_field]: values)
+        .pluck(:[calculated_field])
+}
+```
+
+## 8. Advanced Form Controllers
+
+### Reveal-Form Controller Usage
+
+```erb
+<!-- Conditional visibility based on form state -->
+<span data-reveal-form-target="reveal" data-reveal-form-condition='q.[field]_in.includes("[value]")'>
+  [Conditional content]
+</span>
+
+<!-- Enable/disable form elements -->
+<div data-reveal-form-target="enable" data-reveal-form-condition='q.[field]_null == "0"'>
+  <!-- Form elements that are enabled/disabled based on condition -->
+</div>
+```
+
+### Auto-Submit Integration
+
+```erb
+<!-- All form elements should have auto-submit action -->
+<%= form.select :[field], [options], {},
+    data: { action: "reveal-form#refresh auto-submit#submit" } %>
+
+<%= form.check_box :[field],
+    data: { action: "reveal-form#refresh auto-submit#submit" } %>
+
+<%= form.date_field :[field],
+    data: { action: "auto-submit#submit" } %>
+```
+
+## 9. Responsive Design Patterns
+
+### Mobile-Friendly Filters
+
+```erb
+<!-- Hide text on mobile, show on desktop -->
+<%= ui.button icon_left: "filter", style: :secondary, size: :sm,
+    data: { "event-name-param": "dialog:open#filters-drawer", action: "click->event#dispatch:prevent" } do %>
+  <span class="hidden md:block">Filters</span>
+<% end %>
+
+<!-- Stack filters vertically on mobile -->
+<div class="flex flex-col md:flex-row gap-2">
+  <!-- Primary filters -->
+</div>
+```
+
+### Touch-Friendly Components
+
+```erb
+<!-- Use appropriate sizing for touch -->
+<%= form.select :[field], [options], { width: :sm },
+    data: { action: "auto-submit#submit" } %>
+
+<!-- Ensure dropdowns work well on mobile -->
+<%= ui.dropdown strategy: :fixed do |component| %>
+  <!-- Dropdown content -->
+<% end %>
+```
+
+## 10. Implementation Checklist
+
+### Basic Setup
+- [ ] search_form_for met Pulse::FormBuilder
+- [ ] auto-submit en reveal-form controllers toegevoegd
+- [ ] turbo_frame targeting geconfigureerd
+- [ ] Primary filters werkend met auto-submit
+
+### Advanced Search
+- [ ] Search-select component geïmplementeerd
+- [ ] Search config JSON correct geconfigureerd
+- [ ] Multiple search groups gedefinieerd
+- [ ] Association searches werkend
+
+### Secondary Filters
+- [ ] Filters drawer geïmplementeerd
+- [ ] Filter sections logisch georganiseerd
+- [ ] Conditional form elements werkend
+- [ ] All form elements hebben auto-submit
+
+### Field Management
+- [ ] Fields dropdown geïmplementeerd
+- [ ] Field presets geconfigureerd
+- [ ] Field visibility toggle werkend
+- [ ] URL state behouden
+
+### Controller Integration
+- [ ] Filters method met dataloaders
+- [ ] Fields method met permit/require/default
+- [ ] Default filter values ingesteld
+- [ ] Performance optimized (includes, etc.)
+
+### UX & Responsive
+- [ ] Mobile-friendly design
+- [ ] Touch-friendly components
+- [ ] Loading states geïmplementeerd
+- [ ] Error handling graceful
+
+## 11. Replacement Guide
+
+### Basis Replacements
+- `[entiteit]` → `order`, `product`, `customer`, `user`
+- `[entiteiten]` → `orders`, `products`, `customers`, `users`
+- `[Entiteiten]` → `Orders`, `Products`, `Customers`, `Users`
+- `[Model]` → `Order`, `Product`, `Customer`, `User`
+
+### Filter Field Replacements
+- `[filter_field]` → `status`, `category_id`, `active`
+- `[filter_options]` → `[["Actief", true], ["Inactief", false]]`
+- `[filter_naam]` → "status", "categorieën", "gebruikers"
+- `[enum_field]` → `status`, `priority`, `type`
+- `[date_field]` → `created_at`, `updated_at`, `deadline`
+- `[boolean_field]` → `active`, `published`, `featured`
+- `[numeric_field]` → `price`, `quantity`, `score`
+
+### Association Replacements
+- `[associatie]` → `customer`, `category`, `supplier`
+- `[associatie_entiteiten]_path` → `customers_path`, `categories_path`
+- `[AssociatieModel]` → `Customer`, `Category`, `Supplier`
+- `[weergave_veld]` → `:name`, `:title`, `:label`
+
+### Path Replacements
+- `[entiteiten]_path` → `orders_path`, `products_path`
+- `[search_config_json]` → actual JSON configuration array
+
+### Field Set Replacements
+- `[compact_fields]` → `[:id, :name]`
+- `[default_fields]` → `[:id, :name, :status, :created_at]`
+- `[detailed_fields]` → `[:id, :name, :status, :created_at, :updated_at, :customer]`
+
+Dit patroon biedt een complete en herbruikbare basis voor alle filter formulieren in Pulse applicaties.

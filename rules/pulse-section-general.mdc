@@ -1,0 +1,544 @@
+---
+name: pulse_section_template_pattern
+description: Standards for implementing Pulse section templates with inline editing and turbo frame functionality
+version: 2.0.0
+author: Frank
+date: 2025-08-24
+globs:
+  - "app/views/**/section_*/show.html.erb"
+  - "app/views/**/section_*/edit.html.erb"
+  - "app/controllers/**/section_*_controller.rb"
+tags:
+  - pulse
+  - sections
+  - turbo-frames
+  - inline-editing
+  - ui-components
+  - erb
+---
+
+# Pulse Section Template Pattern
+
+Dit document beschrijft het herbruikbare patroon voor het creëren van Rails sectie templates met controller actions, toepasbaar op alle sectie types.
+
+## Overzicht
+
+Een sectie template bestaat uit:
+1. **Turbo Frame Wrapper** - Voor lazy loading en updates
+2. **Section Page Structure** - Heading, actions en content
+3. **Columns Layout** - Voor georganiseerde data presentatie
+4. **Description Lists** - Voor key-value data display
+5. **Edit Functionality** - Inline editing binnen sectie
+
+## 1. Section Template (section_[sectie_naam]/show.html.erb)
+
+### Basis Structuur
+
+```erb
+<%= turbo_frame_tag "section-[sectie_naam]" do %>
+  <%= ui.section do %>
+    <%= ui.section.page do |p| %>
+      <% p.with_heading do %>
+        <%= ui.heading :h2, "[sectie_titel]" %>
+      <% end %>
+
+      <% p.with_actions do %>
+        <%= ui.button "[actie_tekst]", href: edit_[entiteit]_section_[sectie_naam]_path(@[entiteit]),
+            style: :secondary, size: :sm, icon_left: "pencil" %>
+      <% end %>
+
+      <%= ui.columns do |c| %>
+        <% c.with_column width: "1/2" do %>
+          <%= ui.description_list do |list| %>
+            <%= list.with_item do |item| %>
+              <% item.with_key { [Model].human_attribute_name(:[attribuut1]) } %>
+              <% item.with_value { @[entiteit].[attribuut1] } %>
+            <% end %>
+
+            <%= list.with_item do |item| %>
+              <% item.with_key { [Model].human_attribute_name(:[attribuut2]) } %>
+              <% item.with_value { @[entiteit].[attribuut2] } %>
+            <% end %>
+          <% end %>
+        <% end %>
+
+        <% c.with_column width: "1/2" do %>
+          <%= ui.description_list do |list| %>
+            <%= list.with_item do |item| %>
+              <% item.with_key { [Model].human_attribute_name(:[attribuut3]) } %>
+              <% item.with_value { @[entiteit].[attribuut3] } %>
+            <% end %>
+
+            <%= list.with_item do |item| %>
+              <% item.with_key { [Model].human_attribute_name(:[attribuut4]) } %>
+              <% item.with_value { @[entiteit].[attribuut4] } %>
+            <% end %>
+          <% end %>
+        <% end %>
+      <% end %>
+    <% end %>
+  <% end %>
+<% end %>
+```
+
+### Verplichte elementen:
+- `turbo_frame_tag "section-[sectie_naam]"` voor lazy loading
+- `ui.section` wrapper voor consistente styling
+- `ui.section.page` met heading en actions
+- `ui.columns` voor georganiseerde layout
+- `ui.description_list` voor key-value data
+
+## 2. Section Controller (section_[sectie_naam]_controller.rb)
+
+### Basis Controller Structuur
+
+```ruby
+class [Entiteiten]::Section[SectieNaam]Controller < ApplicationController
+  before_action :set_[entiteit]
+
+  def show
+    respond_to do |format|
+      format.html do
+        turbo_frame_required
+      end
+    end
+  end
+
+  def edit
+    respond_to do |format|
+      format.html do
+        turbo_frame_required
+      end
+    end
+  end
+
+  def update
+    if @[entiteit].update([entiteit]_params)
+      redirect_to [entiteit]_section_[sectie_naam]_path(@[entiteit])
+    else
+      render :edit, status: :unprocessable_entity
+    end
+  end
+
+  private
+
+  def set_[entiteit]
+    @[entiteit] = [Model].find(params[:[entiteit]_id])
+  end
+
+  def [entiteit]_params
+    params.expect([entiteit]: [:[attribuut1], :[attribuut2], :[attribuut3]])
+  end
+end
+```
+
+### Collection Section Controller
+
+```ruby
+class [Entiteiten]::Section[Collection]Controller < ApplicationController
+  def index
+    @[entiteit] = [Model].find(params[:[entiteit]_id])
+
+    @q = @[entiteit].[collection].includes([associations]).ransack([collection]_filters.to_h)
+    @q.sorts = "[default_sort]" if @q.sorts.empty?
+    @f = [collection]_fields
+    @metadata, @[collection] = paginate(@q.result)
+  end
+
+  private
+
+  def [collection]_fields
+    fields.permit(:[field1], :[field2], :[field3])
+          .require(:[required_field])
+          .default(:[default_field1], :[default_field2])
+          .from(:[collection])
+          .store(:[collection])
+  end
+
+  def [collection]_filters
+    @[collection]_filters ||= filters.initial.dataloaders(
+      [association]_id_in: ->(ids) { [AssociationModel].where(id: ids).pluck(:[display_field], :id) }
+    ).store(:[collection])
+  end
+end
+```
+
+## 3. Edit Template (section_[sectie_naam]/edit.html.erb)
+
+### Inline Edit Formulier
+
+```erb
+<%= turbo_frame_tag "section-[sectie_naam]" do %>
+  <%= ui.section do %>
+    <%= ui.section.page do |p| %>
+      <% p.with_heading do %>
+        <%= ui.heading :h2, "[sectie_titel] bewerken" %>
+      <% end %>
+
+      <%= form_with model: @[entiteit], url: [entiteit]_section_[sectie_naam]_path(@[entiteit]),
+          local: true, data: { controller: "auto-submit" } do |form| %>
+        <%= ui.columns do |c| %>
+          <% c.with_column width: "1/2" do %>
+            <div class="flex flex-col gap-3">
+              <%= ui.form.field form, :[attribuut1] do |field| %>
+                <%= field.with_label %>
+                <%= field.with_input %>
+                <%= field.with_hint %>
+                <%= field.with_error %>
+              <% end %>
+
+              <%= ui.form.field form, :[attribuut2] do |field| %>
+                <%= field.with_label %>
+                <%= field.with_input %>
+                <%= field.with_hint %>
+                <%= field.with_error %>
+              <% end %>
+            </div>
+          <% end %>
+
+          <% c.with_column width: "1/2" do %>
+            <div class="flex flex-col gap-3">
+              <%= ui.form.field form, :[attribuut3] do |field| %>
+                <%= field.with_label %>
+                <%= field.with_input %>
+                <%= field.with_hint %>
+                <%= field.with_error %>
+              <% end %>
+
+              <%= ui.form.field form, :[attribuut4] do |field| %>
+                <%= field.with_label %>
+                <%= field.with_select options_for_select([["[optie1_label]", "[optie1_waarde]"], ["[optie2_label]", "[optie2_waarde]"]]) %>
+                <%= field.with_hint %>
+                <%= field.with_error %>
+              <% end %>
+            </div>
+          <% end %>
+        <% end %>
+
+        <div class="flex justify-end gap-2 pt-3">
+          <%= ui.button "Annuleren", href: [entiteit]_section_[sectie_naam]_path(@[entiteit]),
+              style: :secondary %>
+          <%= ui.button "Opslaan", type: :submit, style: :primary, variant: :success %>
+        </div>
+      <% end %>
+    <% end %>
+  <% end %>
+<% end %>
+```
+
+## 4. Collection Section Template
+
+### Voor sectie met gerelateerde entiteiten
+
+```erb
+<%= turbo_frame_tag "section-[collection]" do %>
+  <%= ui.section do %>
+    <%= ui.section.page do |p| %>
+      <% p.with_heading do %>
+        <%= ui.heading :h2, "[collection_titel]" %>
+      <% end %>
+
+      <!-- Full index pattern voor collections -->
+      <div class="flex flex-col gap-3" data-controller="multi-check reveal">
+        <%= ui.action_bar sticky: true, contained: true, hidden: true, "data-multi-check-target": "reveal", "data-multi-check-condition": "count > 0" do |action_bar| %>
+          <% action_bar.with_actions do %>
+            <%= render "[collection]/results_actions", id: "[collection]_actions_bulk", selected: true %>
+          <% end %>
+          <span data-multi-check-target="counter">0</span> selected
+        <% end %>
+
+        <%= ui.action_bar stacked: true, "data-multi-check-target": "visible", "data-multi-check-condition": "count == 0" do |action_bar| %>
+          <% action_bar.with_actions do %>
+            <%= render "[collection]/results_actions", id: "[collection]_actions" %>
+          <% end %>
+          <%= render "filters_form" %>
+        <% end %>
+
+        <%= turbo_frame_tag 'results', target: '_top', class: "contents" do %>
+          <%= render "results" %>
+        <% end %>
+      </div>
+    <% end %>
+  <% end %>
+<% end %>
+```
+
+## 5. Routes Configuratie
+
+### Nested Resource Routes
+
+```ruby
+# config/routes.rb
+resources :[entiteiten], only: [:index, :show, :new, :create, :edit, :update, :destroy] do
+  # Single resource sections
+  resource :section_[sectie_naam], only: [:show, :edit, :update],
+           controller: "[entiteiten]/section_[sectie_naam]"
+
+  # Collection sections
+  resources :section_[collection], only: [:index],
+            controller: "[entiteiten]/section_[collection]"
+end
+```
+
+**Generated Routes:**
+- `[entiteit]_section_[sectie_naam]_path(@[entiteit])` → `/[entiteiten]/:id/section_[sectie_naam]`
+- `edit_[entiteit]_section_[sectie_naam]_path(@[entiteit])` → `/[entiteiten]/:id/section_[sectie_naam]/edit`
+
+## 6. Beschikbare Sectie Types
+
+### Single Resource Sections
+
+**Summary Section:**
+```erb
+<!-- Voor basis entiteit informatie -->
+<%= ui.description_list do |list| %>
+  <%= list.with_item do |item| %>
+    <% item.with_key { [Model].human_attribute_name(:naam) } %>
+    <% item.with_value { @[entiteit].naam } %>
+  <% end %>
+<% end %>
+```
+
+**Details Section:**
+```erb
+<!-- Voor uitgebreide entiteit informatie -->
+<%= ui.columns do |c| %>
+  <% c.with_column do %>
+    <!-- Primaire details -->
+  <% end %>
+  <% c.with_column do %>
+    <!-- Secundaire details -->
+  <% end %>
+<% end %>
+```
+
+### Collection Sections
+
+**Related Items Section:**
+```erb
+<!-- Voor gerelateerde entiteiten met filtering -->
+<%= render "filters_form" %>
+<%= render "results" %>
+<%= ui.pagination @metadata %>
+```
+
+## 7. Component Specificaties
+
+### Turbo Frame
+```erb
+<%= turbo_frame_tag "section-[sectie_naam]" do %>
+  <!-- Content -->
+<% end %>
+```
+
+### Section Page Structure
+```erb
+<%= ui.section do %>
+  <%= ui.section.page do |p| %>
+    <% p.with_heading { ui.heading :h2, "[titel]" } %>
+    <% p.with_actions { /* Action buttons */ } %>
+    <!-- Content -->
+  <% end %>
+<% end %>
+```
+
+### Columns Layout
+```erb
+<%= ui.columns do |c| %>
+  <% c.with_column width: "1/2" do %>
+    <!-- Linker kolom -->
+  <% end %>
+  <% c.with_column width: "1/2" do %>
+    <!-- Rechter kolom -->
+  <% end %>
+<% end %>
+```
+
+### Description Lists
+```erb
+<%= ui.description_list do |list| %>
+  <%= list.with_item do |item| %>
+    <% item.with_key { "Label" } %>
+    <% item.with_value { "Waarde" } %>
+  <% end %>
+<% end %>
+```
+
+### Form Fields
+```erb
+<%= ui.form.field form, :[field_name] do |field| %>
+  <%= field.with_label %>
+  <%= field.with_input %>
+  <%= field.with_hint %>
+  <%= field.with_error %>
+<% end %>
+```
+
+## 8. Data Display Patterns
+
+### Text Values
+```erb
+<%= list.with_item do |item| %>
+  <% item.with_key { [Model].human_attribute_name(:naam) } %>
+  <% item.with_value { @[entiteit].naam } %>
+<% end %>
+```
+
+### Boolean Values
+```erb
+<%= list.with_item do |item| %>
+  <% item.with_key { [Model].human_attribute_name(:actief) } %>
+  <% item.with_value { ui.bool @[entiteit].actief } %>
+<% end %>
+```
+
+### Association Values
+```erb
+<%= list.with_item do |item| %>
+  <% item.with_key { "Categorie" } %>
+  <% item.with_value { @[entiteit].categorie&.naam } %>
+<% end %>
+```
+
+### Email Links
+```erb
+<%= list.with_item do |item| %>
+  <% item.with_key { [Model].human_attribute_name(:email) } %>
+  <% item.with_value do %>
+    <%= ui.link @[entiteit].email, href: "mailto:#{@[entiteit].email}" %>
+  <% end %>
+<% end %>
+```
+
+### Currency Values
+```erb
+<%= list.with_item do |item| %>
+  <% item.with_key { [Model].human_attribute_name(:prijs) } %>
+  <% item.with_value { ui.money @[entiteit].prijs } %>
+<% end %>
+```
+
+### Date Values
+```erb
+<%= list.with_item do |item| %>
+  <% item.with_key { [Model].human_attribute_name(:created_at) } %>
+  <% item.with_value { l(@[entiteit].created_at, format: :short) } %>
+<% end %>
+```
+
+## 9. Advanced Patterns
+
+### Conditional Content
+```erb
+<% if @[entiteit].[field].present? %>
+  <%= list.with_item do |item| %>
+    <% item.with_key { [Model].human_attribute_name(:[field]) } %>
+    <% item.with_value { @[entiteit].[field] } %>
+  <% end %>
+<% end %>
+```
+
+### Rich Content Display
+```erb
+<%= list.with_item do |item| %>
+  <% item.with_key { "Status" } %>
+  <% item.with_value do %>
+    <%= ui.badge @[entiteit].status.humanize, variant: @[entiteit].status %>
+  <% end %>
+<% end %>
+```
+
+### Complex Associations
+```erb
+<%= list.with_item do |item| %>
+  <% item.with_key { "Adres" } %>
+  <% item.with_value do %>
+    <%= [@[entiteit].straat, @[entiteit].stad, @[entiteit].postcode].compact.join(", ") %>
+  <% end %>
+<% end %>
+```
+
+## 10. Implementatie Checklist
+
+### Basic Setup
+- [ ] Controller met `show`, `edit`, `update` actions
+- [ ] `turbo_frame_required` in controller actions
+- [ ] Turbo frame wrapper in templates
+- [ ] Proper parameter handling met `params.expect()`
+- [ ] Nested routes configuratie
+
+### Template Structure
+- [ ] Section page structure met heading en actions
+- [ ] Columns layout voor data organisatie
+- [ ] Description lists voor key-value display
+- [ ] Edit functionaliteit met `auto-submit`
+- [ ] Consistent naming conventions
+
+### Form Integration
+- [ ] Form fields met proper validation display
+- [ ] Cancel en submit buttons
+- [ ] Auto-submit functionaliteit
+- [ ] Error handling en display
+
+### Performance
+- [ ] Lazy loading via turbo frames
+- [ ] Includes voor N+1 query preventie
+- [ ] Efficient data loading strategieën
+
+## 11. Replacement Guide
+
+### Basis Entity Replacements
+- `[entiteit]` → `customer`, `product`, `order`, `user`
+- `[entiteiten]` → `customers`, `products`, `orders`, `users`
+- `[Entiteiten]` → `Customers`, `Products`, `Orders`, `Users`
+- `[Model]` → `Customer`, `Product`, `Order`, `User`
+
+### Section Specific Replacements
+- `[sectie_naam]` → `summary`, `details`, `specifications`, `notes`
+- `[sectie_titel]` → "Gegevens", "Details", "Specificaties", "Notities"
+- `[SectieNaam]` → `Summary`, `Details`, `Specifications`, `Notes`
+- `[actie_tekst]` → "Bewerken", "Wijzigen", "Edit"
+
+### Attribute Replacements
+- `[attribuut1]`, `[attribuut2]` → `:naam`, `:email`, `:telefoon`, `:adres`
+- `[field_name]` → `naam`, `email`, `telefoon`, `status`
+
+### Collection Replacements
+- `[collection]` → `orders`, `products`, `reviews`, `items`
+- `[collection_titel]` → "Bestellingen", "Producten", "Reviews"
+- `[Collection]` → `Orders`, `Products`, `Reviews`
+
+### Association Replacements
+- `[association]` → `customer`, `category`, `supplier`
+- `[AssociationModel]` → `Customer`, `Category`, `Supplier`
+- `[display_field]` → `naam`, `title`, `label`
+
+### Options Replacements
+- `[optie1_label]`, `[optie2_label]` → "Actief", "Inactief"
+- `[optie1_waarde]`, `[optie2_waarde]` → `true`, `false`
+
+### Path Replacements
+- `[entiteit]_section_[sectie_naam]_path` → `customer_section_summary_path`
+- `edit_[entiteit]_section_[sectie_naam]_path` → `edit_product_section_details_path`
+
+## 12. Voorbeeld Implementaties
+
+### Customer Summary Section
+- **Controller**: `Customers::SectionSummaryController`
+- **Routes**: `customer_section_summary_path`
+- **Frame ID**: `section-summary`
+- **Template**: Contact informatie in twee kolommen
+
+### Product Details Section
+- **Controller**: `Products::SectionDetailsController`
+- **Routes**: `product_section_details_path`
+- **Frame ID**: `section-details`
+- **Template**: Product specificaties en beschrijving
+
+### Order Items Section
+- **Controller**: `Orders::SectionItemsController`
+- **Routes**: `order_section_items_path`
+- **Frame ID**: `section-items`
+- **Template**: Tabel met order regel items
+
+Dit patroon biedt een consistente en herbruikbare basis voor alle sectie templates in de applicatie.

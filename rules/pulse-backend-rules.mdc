@@ -1,0 +1,174 @@
+---
+description: "Rules and guidelines for using the Pulse::Backend concern in Rails controllers"
+globs: ["app/controllers/**/*.rb"]
+---
+
+# Pulse::Backend Concern Usage Rules
+
+<rule>
+name: pulse_backend_usage
+description: "Guidelines for using the Pulse::Backend concern in Rails controllers"
+filters:
+  - type: file_extension
+    pattern: "\.rb$"
+  - type: file_path
+    pattern: "controllers/"
+actions:
+  - type: suggest
+    message: |
+      When using Pulse::Backend concern in controllers, follow these rules:
+
+      ## 1. Controller Setup
+      ```ruby
+      class YourController < ApplicationController
+        include Pulse::Backend
+
+        # Use class-level breadcrumb for consistent navigation
+        add_breadcrumb "Section Name", section_path
+
+        # Set turbo frame ID for consistent frame targeting
+        before_action :set_tf
+      end
+      ```
+
+      ## 2. Fields Management
+      Use `fields()` for managing display state of UI elements:
+      ```ruby
+      def index
+        @fields = fields() # Uses :f param by default
+        # or with custom param
+        @fields = fields(:display)
+      end
+      ```
+
+      ## 3. Filters Management
+      Use `filters()` for managing filter state:
+      ```ruby
+      def index
+        @filters = filters() # Uses :q param by default, ignores :s
+        # or with custom param and ignored fields
+        @filters = filters(:search, [:page, :per_page])
+
+        # Apply filters to your query
+        @products = Product.all
+        @products = @products.where(name: @filters[:name]) if @filters[:name].present?
+      end
+      ```
+
+      ## 4. Flash Messages
+      Use `alert()` and `toast()` for consistent flash messaging:
+      ```ruby
+      def create
+        if @product.save
+          flash[:success] = toast("Product created successfully", @product)
+          redirect_to @product
+        else
+          flash[:danger] = alert("Failed to create product", @product,
+                                description: @product.errors.full_messages.join(", "))
+          render :new
+        end
+      end
+      ```
+
+      ## 5. Change Confirmation
+      Use `change_confirmed?` for destructive actions:
+      ```ruby
+      def destroy
+        unless change_confirmed?
+          @change_set = change_set(@product, [:orders, :reviews])
+          render :confirm_destroy
+          return
+        end
+
+        @product.destroy
+        flash[:success] = toast("Product deleted successfully")
+        redirect_to products_path
+      end
+      ```
+
+      ## 6. Change Sets
+      Use `change_set()` to track changes before destructive actions:
+      ```ruby
+      def bulk_update
+        @products = Product.where(id: params[:product_ids])
+        @change_set = change_set(@products, [:category, :supplier])
+
+        # Show confirmation page with change summary
+        render :confirm_bulk_update
+      end
+      ```
+
+      ## 7. Pagination
+      Use `paginate()` for consistent pagination:
+      ```ruby
+      def index
+        @products = Product.includes(:category)
+        @pagination, @products = paginate(@products, items: 25)
+
+        # For large datasets, use countless pagination
+        @pagination, @products = paginate(@products, countless: true, items: 50)
+      end
+      ```
+
+      ## 8. Breadcrumbs
+      Use breadcrumbs for navigation context:
+      ```ruby
+      # Class-level for consistent breadcrumbs
+      add_breadcrumb "Products", products_path
+      add_breadcrumb "Categories", categories_path, only: [:show, :edit]
+
+      # Instance-level for dynamic breadcrumbs
+      def show
+        add_breadcrumb @product.name, product_path(@product)
+      end
+      ```
+
+      ## 9. Frame IDs
+      Use `frame_id()` for consistent Turbo Frame targeting:
+      ```ruby
+      def section_orders
+        @frame_id = frame_id("orders") # Generates "customers-orders"
+        @orders = @customer.orders.includes(:product)
+      end
+
+      # In views
+      <%= turbo_frame_tag frame_id("orders") do %>
+        <!-- content -->
+      <% end %>
+      ```
+
+      ## 10. Best Practices
+
+      ### DO:
+      - Always include `Pulse::Backend` in controllers that use UI components
+      - Use `set_tf` before_action for consistent frame targeting
+      - Use class-level breadcrumbs for static navigation
+      - Use instance-level breadcrumbs for dynamic content
+      - Use `change_set()` before bulk operations
+      - Use `paginate()` instead of manual pagination
+      - Use `toast()` for success messages, `alert()` for errors
+
+      ### DON'T:
+      - Don't manually create flash messages when `alert()` and `toast()` are available
+      - Don't skip change confirmation for destructive actions
+      - Don't use raw pagy methods when `paginate()` is available
+      - Don't create custom frame ID logic when `frame_id()` exists
+      - Don't manually manage breadcrumbs without using the provided helpers
+
+      ## 11. Helper Methods Available in Views
+      These methods are automatically available in views:
+      - `filters` - Access filter state
+      - `breadcrumbs` - Access breadcrumb collection
+      - `frame_id` - Generate frame IDs
+
+      ## 12. Flash Types
+      Available flash types: `:success`, `:info`, `:danger`, `:warning`
+
+      Use them consistently:
+      ```ruby
+      flash[:success] = toast("Success message")
+      flash[:danger] = alert("Error message")
+      flash[:info] = toast("Info message")
+      flash[:warning] = alert("Warning message")
+      ```
+</rule>
